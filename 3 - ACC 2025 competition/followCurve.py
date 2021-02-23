@@ -109,31 +109,15 @@ def findDirection(maxY):
 
 # Function to determine the angle that the car should turn at
 # adjusts angle based on how far off it is
-def setAngle(maxY, turn):
+def setAngle(maxY, section):
     angleRad = 0
     highThresh = 170
     lowThresh = 145
-    #right turn and straight
-    if turn == 'r':
-        if maxY[0] <= 120 or maxY[0] >= highThresh:
+    if section == 'straight':
+        if maxY[0] >= highThresh:
             angleRad = -.02*(abs(maxY[0] - highThresh))
         elif maxY[0] < lowThresh:
             angleRad = .02*(lowThresh - maxY[0])
-    # left turn
-    elif turn == 'l':
-        if maxY[4] <= 120 or maxY[4] >= highThresh:
-            angleRad = .02*(maxY[4] - highThresh)
-        elif maxY[4] < lowThresh:
-            angleRad = -.02*(lowThresh - maxY[4])
-    elif turn == 's':
-        if maxY[0] <= 120 or maxY[0] >= highThresh:
-            angleRad = -.02*(abs(maxY[0] - highThresh))
-        elif maxY[0] < lowThresh:
-            angleRad = .02*(lowThresh - maxY[0])
-    if angleRad > 0.5:
-        angleRad = 0.4
-    elif angleRad < -0.5:
-        angleRad = -0.4
     angleDeg = math.degrees(angleRad)
     print('Angle (Radians)=',angleRad)
     print('Angle (Degrees)=',angleDeg)
@@ -154,21 +138,8 @@ def setSpeed(angle, prev_mtrSpeed, counter, turn, manual, speed_mod=0.066):
     if manual == True:
         new = gpad.read()
         mtrSpeed = speed_mod*gpad.RT
-    elif turn == 's':
-        # keep mtrSpeed for 3 iterations so that the mtrSpeed change can actually be in effect
-        if counter % 3 != 0:
-            mtrSpeed = prev_mtrSpeed
-        elif angleMag >= 0.2:
-            mtrSpeed = mtrSpeed * 0.8
-        elif angleMag >= 0.1:
-            mtrSpeed = mtrSpeed * 0.9
-        else:
-            mtrSpeed = mtrSpeed * 1.1
-    else:
-        if angleMag >= 0.35:
-            mtrSpeed = mtrSpeed * 0.95
-        else:
-            mtrSpeed = mtrSpeed
+    elif section == 'straight':
+        mtrSpeed = 0.075
     print('Speed (m/s) =',msSpeed)
     print('mtrSpeed =',mtrSpeed)
     return msSpeed, mtrSpeed
@@ -178,6 +149,7 @@ def findSection(maxY, cols, curr_section):
     section = curr_section
     if maxY[0] >= 145 and maxY[0] <= 170 and maxY[int(len(maxY)-1)] >= 145 and maxY[int(len(maxY)-1)] <= 170:
         section = 'straight'
+    print('Section =', section)
     return section
 
 def videoName(path, filename, filetype):
@@ -216,7 +188,7 @@ def saveAsPrevFrame(prevData, maxSize):
         prevFrames.pop(0) # pop the first frame to save memory
 
 # takes the index of the data that you want to read and how many frames ago you read it from and returns said data
-# prevFrame[frameNum] = [binaryf.copy(), maxY, turn, angleRad, mtrSpeed, counter, current, batteryVoltage, encoderCounts, frameTime]
+# prevFrame[frameNum] = [binaryf.copy(), maxY, section, angleRad, mtrSpeed, counter, current, batteryVoltage, encoderCounts, frameTime]
 def readPrevFrame(dataNum, framesAgo):
     if len(prevFrames) < framesAgo:
         return
@@ -243,9 +215,10 @@ try:
         # x = 5, and x = 634 are near the edge of the screen but not exactly on the edge
         cols = [5, 160, 320, 480, 634]
         maxY = findLowestWhite(binaryf, cols)
-        turn = findDirection(maxY)
-        angleRad, angleDeg = setAngle(maxY, turn)
-        msSpeed, mtrSpeed = setSpeed(angleRad, readPrevFrame(4,1), counter, turn, manual)
+        curr_section = readPrevFrame(2,1)
+        section = findSection(maxY, cols, curr_section)
+        angleRad, angleDeg = setAngle(maxY, section)
+        msSpeed, mtrSpeed = setSpeed(angleRad, readPrevFrame(4,1), counter, section, manual)
         print('Counter:', counter)
         new = gpad.read()
 
@@ -268,7 +241,7 @@ try:
         new = gpad.read()
 
         # save the previous 10 frames
-        prevData = [binaryf.copy(), maxY, turn, angleRad, mtrSpeed, counter, current, batteryVoltage, encoderCounts, frameTime]
+        prevData = [binaryf.copy(), maxY, section, angleRad, mtrSpeed, counter, current, batteryVoltage, encoderCounts, frameTime]
         saveAsPrevFrame(prevData, 10)
         counter += 1
         frameList.append(binaryf.copy())

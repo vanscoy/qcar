@@ -2,6 +2,7 @@ from Quanser.q_essential import Camera2D
 from Quanser.q_ui import gamepadViaTarget
 from Quanser.product_QCar import QCar
 from matplotlib import pyplot as plt
+from speedCalc import *
 import time
 import struct
 import numpy as np 
@@ -26,17 +27,32 @@ counter = 0
 imageWidth = 640
 imageHeight = 480
 croppedImageHeight = int(imageHeight/2)
-#cameraID = '3'
-angle = 0
+angleRad = 0
 max_distance = 5
+mtrSpeed = 0.066
 robot_pos = np.array([0.0, 0.0, 0.0])
+isColor = False
+manual = False
+path = './outputVideos/CSI_Front_Camera/'
+filename = 'output'
+filetype = '.avi'
+LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
+frameTime = 0
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
-## Initialize the CSI cameras
+## Object Initializations
 frontCam = Camera2D(camera_id="3", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
-
 myCar = QCar()
 gpad = gamepadViaTarget(1)
+speed = speedCalc(robot_pos, myCar)
+new = gpad.read()
+frameTimeList = list()
+frameList = list()
+prevFrames = list()
+
+
+# -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+### Functions
 
 # converts an BGR image to a binary image
 # applies erosion and dilation to reduce error
@@ -51,7 +67,7 @@ def BGR2Binary(image):
     ret, binaryImage = cv2.threshold(blurredImage, 100, 255, cv2.THRESH_BINARY)
     
     # Morphological operations to remove noise
-    # kernel can change sizes, larger remove more noise but costwrothy and chain effect
+    # kernel can change sizes, larger remove more noise but costworthy and chain effect
     kernel = np.ones((5, 5), np.uint8)
     # lose small holes in the foreground objects and connect nearby objects
     morphedImage = cv2.morphologyEx(binaryImage, cv2.MORPH_CLOSE, kernel)
@@ -59,28 +75,6 @@ def BGR2Binary(image):
     morphedImage = cv2.morphologyEx(morphedImage, cv2.MORPH_OPEN, kernel)
 
     return morphedImage
-
-# function to format the display of multiple camera feeds
-# currently set for display of all 4 cams
-def combineFeeds(leftCam, backCam, rightCam, frontCam):
-    # defining barriers to display between the camera feeds
-    horizontalBlank = np.zeros((20, 2*imageWidth+60, 3), dtype=np.uint8)
-    verticalBlank = np.zeros((croppedImageHeight, 20, 3), dtype=np.uint8)
-
-    # combine all images into one array
-    allCams = np.concatenate(
-        (horizontalBlank,
-            np.concatenate(
-                (verticalBlank, leftCam, verticalBlank, frontCam, verticalBlank),
-                axis = 1),
-            horizontalBlank,
-            np.concatenate(
-                (verticalBlank, backCam, verticalBlank, rightCam, verticalBlank),
-                axis = 1),
-            horizontalBlank),
-        axis=0)
-    
-    return allCams
 
 # Function to find the highest y value of the white pixels in each given column
 # image is a binary image as a 2d integer array where each element is 0 or 255
@@ -116,32 +110,35 @@ def findDirection(maxY):
 # Function to determine the angle that the car should turn at
 # adjusts angle based on how far off it is
 def setAngle(maxY, turn):
-    angle = 0
+    angleRad = 0
     highThresh = 170
     lowThresh = 145
     #right turn and straight
     if turn == 'r':
         if maxY[0] <= 120 or maxY[0] >= highThresh:
-            angle = -.02*(abs(maxY[0] - highThresh))
+            angleRad = -.02*(abs(maxY[0] - highThresh))
         elif maxY[0] < lowThresh:
-            angle = .02*(lowThresh - maxY[0])
+            angleRad = .02*(lowThresh - maxY[0])
     # left turn
     elif turn == 'l':
         if maxY[4] <= 120 or maxY[4] >= highThresh:
-            angle = .02*(maxY[4] - highThresh)
+            angleRad = .02*(maxY[4] - highThresh)
         elif maxY[4] < lowThresh:
-            angle = -.02*(lowThresh - maxY[4])
+            angleRad = -.02*(lowThresh - maxY[4])
     elif turn == 's':
         if maxY[0] <= 120 or maxY[0] >= highThresh:
-            angle = -.02*(abs(maxY[0] - highThresh))
+            angleRad = -.02*(abs(maxY[0] - highThresh))
         elif maxY[0] < lowThresh:
-            angle = .02*(lowThresh - maxY[0])
-    if angle > 0.5:
-        angle = 0.4
-    elif angle < -0.5:
-        angle = -0.4
-    print('Angle =',angle)
-    return angle
+            angleRad = .02*(lowThresh - maxY[0])
+    if angleRad > 0.5:
+        angleRad = 0.4
+    elif angleRad < -0.5:
+        angleRad = -0.4
+    angleDeg = math.degrees(angleRad)
+    print('Angle (Radians)=',angleRad)
+    print('Angle (Degrees)=',angleDeg)
+    return angleRad, angleDeg
+
 
 # Function to set and change the speed of the car
 # angle is a float. Sets speed based on sharpness of turn
@@ -150,48 +147,31 @@ def setAngle(maxY, turn):
 # elapsed_time is the time between last iteration and this iteration
 # manual is a boolean that checks if we are controlling the car speed with the gamepad
 # speed mod is a modifier for the speed value from the gamepad. Defaults to 0.066
-def setSpeed(angle, prev_angle, prev_speed, counter, turn, manual, speed_mod=0.066):
-    speed = 0.08 #0.075
+def setSpeed(angle, prev_mtrSpeed, counter, turn, manual, speed_mod=0.066):
+    mtrSpeed = 0.066
+    msSpeed = speed.encoder_speed()
     angleMag = abs(angle)
     if manual == True:
         new = gpad.read()
-        speed = speed_mod*gpad.RT
+        mtrSpeed = speed_mod*gpad.RT
     elif turn == 's':
-        # keep speed for 4 iterations so that the speed change can actually be in effect
-        if counter % 4 != 0:
-            speed = prev_speed
+        # keep mtrSpeed for 3 iterations so that the mtrSpeed change can actually be in effect
+        if counter % 3 != 0:
+            mtrSpeed = prev_mtrSpeed
         elif angleMag >= 0.2:
-            speed = speed * 0.8
+            mtrSpeed = mtrSpeed * 0.8
         elif angleMag >= 0.1:
-            speed = speed * 0.9
+            mtrSpeed = mtrSpeed * 0.9
         else:
-            speed = speed * 1.1
+            mtrSpeed = mtrSpeed * 1.1
     else:
         if angleMag >= 0.35:
-            speed = speed * 0.95
+            mtrSpeed = mtrSpeed * 0.95
         else:
-            speed = speed
-        '''
-        # keep speed for 4 iterations so that the speed change can actually be in effect
-        if counter % 4 != 0:
-            speed = prev_speed
-        elif prev_angle * angle < 0:
-            if angleMag >= 0.35:
-                speed = speed * 0.8
-            elif angleMag >= 0.1:
-                speed = speed * 0.9
-            else:
-                speed = speed * 1.05
-        else:
-            if angleMag >= 0.35:
-                speed = speed * 0.9
-            elif angleMag >= 0.1:
-                speed = speed * 0.95
-            else:
-                speed = speed * 1.1
-        '''
-    print('Speed =',speed)
-    return speed
+            mtrSpeed = mtrSpeed
+    print('Speed (m/s) =',msSpeed)
+    print('mtrSpeed =',mtrSpeed)
+    return msSpeed, mtrSpeed
 
 # Function to determine which section of the track the car is on
 def findSection(maxY, cols, curr_section):
@@ -199,24 +179,6 @@ def findSection(maxY, cols, curr_section):
     if maxY[0] >= 145 and maxY[0] <= 170 and maxY[int(len(maxY)-1)] >= 145 and maxY[int(len(maxY)-1)] <= 170:
         section = 'straight'
     return section
-
-def leftCurveAngle():
-    return angle
-
-def rightCurveAngle():
-    return angle
-
-def straightAngle():
-    return angle
-
-def curveSpeed():
-    return speed
-
-def straightSpeed():
-    return speed
-
-def driveInLane(image):
-    return
 
 def videoName(path, filename, filetype):
     now = datetime.datetime.now()
@@ -254,7 +216,7 @@ def saveAsPrevFrame(prevData, maxSize):
         prevFrames.pop(0) # pop the first frame to save memory
 
 # takes the index of the data that you want to read and how many frames ago you read it from and returns said data
-# prevFrame[frameNum] = [binaryf.copy(), maxY, turn, angle, speed, counter, current, batteryVoltage, encoderCounts, frameTime]
+# prevFrame[frameNum] = [binaryf.copy(), maxY, turn, angleRad, mtrSpeed, counter, current, batteryVoltage, encoderCounts, frameTime]
 def readPrevFrame(dataNum, framesAgo):
     if len(prevFrames) < framesAgo:
         return
@@ -262,28 +224,17 @@ def readPrevFrame(dataNum, framesAgo):
     frameNum = size - framesAgo
     return prevFrames[frameNum][dataNum]
 
-new = gpad.read()
-frameTimeList = list()
-frameList = list()
-isColor = False
-path = './outputVideos/CSI_Front_Camera/'
-filename = 'output'
-filetype = '.avi'
-prevFrames = list()
+# -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+### Main
+
 try:
-    LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
-    angle = 0
-    speed = 0.066
-    manual = False
-    prev_speed = 0
-    prev_angle = 0
-    frameTime = 0
+    frontCam.read()
     # B button to cancel
     while gpad.B != 1:
         print('-----------------------------------------------------------------')
         startFrame = time.time()
-        frontCam.read()
-        counter += 1
+        if counter >= 1:
+            frontCam.read()
         front = frontCam.image_data[croppedImageHeight:480, :]
         binaryf = BGR2Binary(front)
         cv2.imshow('Binary Front Image', binaryf)
@@ -293,17 +244,16 @@ try:
         cols = [5, 160, 320, 480, 634]
         maxY = findLowestWhite(binaryf, cols)
         turn = findDirection(maxY)
-        angle = setAngle(maxY, turn)
-        speed = setSpeed(angle, prev_angle, prev_speed, counter, turn, manual)
+        angleRad, angleDeg = setAngle(maxY, turn)
+        msSpeed, mtrSpeed = setSpeed(angleRad, readPrevFrame(4,1), counter, turn, manual)
         print('Counter:', counter)
         new = gpad.read()
 
-        #speed = 0.066
+        #mtrSpeed = 0.066
         # activate controls
-        mtr_cmd = np.array([speed, angle])
+        mtr_cmd = np.array([mtrSpeed, angleRad])
+        #mtr_cmd = np.array([mtrSpeed, .25*gpad.LLA])
         current, batteryVoltage, encoderCounts = myCar.read_write_std(mtr_cmd, LEDs)
-        prev_angle = angle
-        prev_speed = speed
         new = gpad.read()
         
         # wait statement
@@ -315,12 +265,15 @@ try:
             msSleepTime = 1 # this check prevents an indefinite sleep as cv2.waitKey waits indefinitely if input is 0
         cv2.waitKey(msSleepTime)
         endFrame = time.time()
+        new = gpad.read()
 
         # save the previous 10 frames
-        prevData = [binaryf.copy(), maxY, turn, angle, speed, counter, current, batteryVoltage, encoderCounts, frameTime]
+        prevData = [binaryf.copy(), maxY, turn, angleRad, mtrSpeed, counter, current, batteryVoltage, encoderCounts, frameTime]
         saveAsPrevFrame(prevData, 10)
+        counter += 1
         frameList.append(binaryf.copy())
         frameTime = endFrame - startFrame
+        print('Frame Time =',frameTime)
         frameTimeList.append(frameTime)
 
 except KeyboardInterrupt:
@@ -334,4 +287,4 @@ finally:
     print('FPS = ', fps)
     print('Filename = ', name)
     saveVideo(frameList, name, fps, isColor)
-    plt.close() 
+    plt.close()

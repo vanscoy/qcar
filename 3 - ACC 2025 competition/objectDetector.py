@@ -21,11 +21,15 @@ print('Sample Time: ', sampleTime)
 counter = 0
 imageWidth = 640
 imageHeight = 480
-cameraID = '0'
+#cameraID = '3'
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Initialize the CSI cameras
-myCam = Camera2D(camera_id=cameraID, frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
+#myCam = Camera2D(camera_id=cameraID, frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
+rightCam = Camera2D(camera_id="0", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
+backCam = Camera2D(camera_id="1", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
+leftCam = Camera2D(camera_id="2", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
+frontCam = Camera2D(camera_id="3", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 
@@ -63,6 +67,7 @@ def detect_color(image, color):
     # Need to set to HSV for proper color usage 
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     
+    # for number of masks:
     # Create a mask set specific to white color bounds
     mask = cv2.inRange(hsv, lower, upper)
     
@@ -94,22 +99,49 @@ try:
         start = time.time()
 
         # Capture RGB Image from CSI
-        myCam.read()
+        leftCam.read()
+        backCam.read()
+        rightCam.read()
+        frontCam.read()
+
         # Morpho stuff; maybe need gradescale
         #binr = cv2.threshold(myCam.image_data, 127, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)[1]
         #kernel = np.ones((3,3), np.uint8)
         #opening = cv2.morphologyEx(binr, cv2.MORPH_OPEN, kernel, iterations = 1)
         counter += 1
 
-        # 240:480 for all
-        cropped = myCam.image_data[0:480, 0:640]
+        # int(imageHeight/2):480 height for all cams
+        leftCropped = leftCam.image_data[int(imageHeight/2):480, 0:640]
+        backCropped = backCam.image_data[int(imageHeight/2):480, 0:640]
+        rightCropped = rightCam.image_data[int(imageHeight/2):480, 0:640]
+        frontCropped = frontCam.image_data[int(imageHeight/2):480, 0:640]
+
+        horizontalBlank = np.zeros((20, 2*imageWidth+60, 3), dtype=np.uint8)
+        verticalBlank = np.zeros((int(imageHeight/2), 20, 3), dtype=np.uint8)
 
         # note: adjust ranges; lighting matters
-        white_boxes = detect_color(cropped, 'white') 
+        detect_color(frontCropped, 'white') 
         #red_boxes = detect_color(myCam.image_data, 'red') # detects tan instead
         #yellow_boxes = detect_color(myCam.image_data, 'yellow') # widen range
         #green_boxes = detect_color(myCam.image_data, 'green') # range too dark
         #blue_boxes = detect_color(myCam.image_data, 'blue') # range too dark
+
+        allCams = np.concatenate((horizontalBlank,
+                                  np.concatenate((verticalBlank,
+                                                  leftCropped,
+                                                  verticalBlank,
+                                                  frontCropped,
+                                                  verticalBlank),
+                                                  axis = 1),
+                                    horizontalBlank,
+                                    np.concatenate((verticalBlank,
+                                                    backCropped,
+                                                    verticalBlank,
+                                                    rightCropped,
+                                                    verticalBlank),
+                                                    axis = 1),
+                                    horizontalBlank),
+                                    axis=0)
 
         # End timing this iteration
         end = time.time()
@@ -120,7 +152,11 @@ try:
         
         # Display the four images
         # note: might still need grayscale; boxes drawn on both frames
-        cv2.imshow('Test Cam', myCam.image_data[0:480, 0:640])
+        #cv2.imshow('Left', leftCropped)
+        #cv2.imshow('Back', backCropped)
+        #cv2.imshow('Right', rightCropped)
+        #cv2.imshow('Front', frontCropped)
+        cv2.imshow('All Cams', allCams)
         #cv2.imshow('White', white_boxes)
         #cv2.imshow('Yellow', yellow_boxes)
         # morpho stuff
@@ -139,5 +175,8 @@ except KeyboardInterrupt:
 
 finally:
     # Terminate all webcam objects    
-    myCam.terminate()
+    leftCam.terminate()
+    backCam.terminate()
+    rightCam.terminate()
+    frontCam.terminate()
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 

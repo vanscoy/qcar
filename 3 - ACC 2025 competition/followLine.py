@@ -8,6 +8,7 @@ import numpy as np
 import cv2
 import math
 import os
+import sys
 import utils
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
@@ -87,7 +88,7 @@ def detectHSV(image, color):
         lineBox = points
         #print(lineBox)
         cv2.drawContours(image, [points], 0, (0, 255, 0), 2)
-
+        
     return image
 
 def combineFeeds(leftCam, backCam, rightCam, frontCam):
@@ -152,7 +153,7 @@ try:
         else:
             print('centered')"""
 
-        cv2.imshow('HSV Objects', hsvObjects)
+        cv2.imshow('HSV Objects', hsvObjects) # Error created here
 
         # return points of bounding box
         # draw another box in the middle of camera
@@ -160,6 +161,10 @@ try:
         # if right of middle box then turn right
         # if left of middle box then turn left
         # https://stackoverflow.com/questions/29739411/what-does-cv2-cv-boxpointsrect-return
+
+        #if os.geteuid() != 0:
+        #    args = ['sudo', sys.executable] + sys.argv + [os.environ]
+        #    os.execlpe('sudo', *args)
 
         ## Movement and Gamepadxit
         # right trigger for speed

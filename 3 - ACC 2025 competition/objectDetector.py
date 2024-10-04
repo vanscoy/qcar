@@ -212,24 +212,24 @@ try:
         front = frontCam.image_data[croppedImageHeight:480, :].copy()
 
         # detects objects based on brightness in a grayscale format
-        #"""
+        """
         grayscaleObjects = combineFeeds(detectGrayscale(left),
                                         detectGrayscale(back),
                                         detectGrayscale(right),
                                         detectGrayscale(front))
-        #"""
+        """
         
         # detect objects based on color in HSV format
         # detects white and yellow and shows on the same image
         # needs x function calls per cam to detect x number of colors
         #"""
-        leftHSV = detectHSV(left, 'white')
+        #leftHSV = detectHSV(left, 'white')
         leftHSV = detectHSV(left, 'yellow')
-        backHSV = detectHSV(back, 'white')
+        #backHSV = detectHSV(back, 'white')
         backHSV = detectHSV(back, 'yellow')
-        rightHSV = detectHSV(right, 'white')
+        #rightHSV = detectHSV(right, 'white')
         rightHSV = detectHSV(right, 'yellow')
-        frontHSV = detectHSV(front, 'white')
+        #frontHSV = detectHSV(front, 'white')
         frontHSV = detectHSV(front, 'yellow')
         hsvObjects = combineFeeds(leftHSV, backHSV, rightHSV, frontHSV)
         #"""
@@ -249,7 +249,7 @@ try:
         # HSV
         cv2.imshow('HSV Objects', hsvObjects)
         # Grayscale
-        cv2.imshow('Grayscale Objects', grayscaleObjects)
+        #cv2.imshow('Grayscale Objects', grayscaleObjects)
 
         # Pause/sleep for sleepTime in milliseconds
         # show only every 20th frame on VNC

@@ -24,11 +24,6 @@ imageWidth = 640
 imageHeight = 480
 croppedImageHeight = int(imageHeight/2)
 #cameraID = '3'
-#grayTimeArr = np.zeros([1,1000], dtype=float)
-#hsvTimeArr = np.zeros([1,1000], dtype=float)
-grayTimeArr = []
-hsvTimeArr = []
-frames = []
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Initialize the CSI cameras
@@ -218,23 +213,16 @@ try:
 
         # detects objects based on brightness in a grayscale format
         #"""
-        grayAllTimeStart = time.time()
         grayscaleObjects = combineFeeds(detectGrayscale(left),
                                         detectGrayscale(back),
                                         detectGrayscale(right),
                                         detectGrayscale(front))
-        grayAllTimeEnd = time.time()
         #"""
-        grayAllTime = grayAllTimeEnd - grayAllTimeStart
-        #grayTimeArr[0,int(counter)] = grayAllTime
-        grayTimeArr.append(grayAllTime)
-        frames.append(counter)
         
         # detect objects based on color in HSV format
         # detects white and yellow and shows on the same image
         # needs x function calls per cam to detect x number of colors
         #"""
-        hsvAllTimeStart = time.time()
         leftHSV = detectHSV(left, 'white')
         leftHSV = detectHSV(left, 'yellow')
         backHSV = detectHSV(back, 'white')
@@ -244,10 +232,6 @@ try:
         frontHSV = detectHSV(front, 'white')
         frontHSV = detectHSV(front, 'yellow')
         hsvObjects = combineFeeds(leftHSV, backHSV, rightHSV, frontHSV)
-        hsvAllTimeEnd = time.time()
-        hsvAllTime = hsvAllTimeEnd - hsvAllTimeStart
-        #hsvTimeArr[0,int(counter)] = hsvAllTime
-        hsvTimeArr.append(hsvAllTime)
         #"""
 
         # test only the front cam
@@ -284,13 +268,4 @@ finally:
     backCam.terminate()
     rightCam.terminate()
     frontCam.terminate()
-
-    """plt.plot(frames,grayTimeArr,'o',color='r')
-    plt.plot(frames,hsvTimeArr,'o',color='b')
-    plt.title('Computation time IP for each frame')
-    plt.xlabel('Frame')
-    plt.ylabel('Computation Time')
-    plt.legend(['Gray Time', 'HSV Time'])
-    plt.savefig("IP_runtime_10-6-24.jpg")
-    plt.show()"""
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 

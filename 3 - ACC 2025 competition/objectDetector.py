@@ -97,17 +97,31 @@ def detectGrayscale(image):
     _,contours,_ = cv2.findContours(binaryImage, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
     # draw contours
+    #Fl - https://www.labelvisor.com/challenges-and-solutions-in-implementing-tight-bounding-boxes/ introduce convex hull bounding
+    # set below but not above 
     for contour in contours:
             # this method changes less, but only draws flat rectangles
             """x1,y1,w,h = cv2.boundingRect(contour)
             cv2.rectangle(contourImage, (x1, y1), (x1+w, y1+h), (0,0,255), 2)"""
 
+            # espsilon param to adjust/control estimate, work to find diff values if needed give 0.01 from overflow
+            epsilonParam = 0.01 * cv2.arcLength(contour, True)
+            # estimation of contour to further simplify and reduce needed points in RBB 
+            estimate = cv2.approxPolyDP(contour, epsilonParam, True)
+
+            #FL - Reduces incorrect input of less than the five required points for minAreaRect
+            if len(contours) >= 5 :
             # this method changes more often, but can draw rectangles at an angle
-            area = cv2.minAreaRect(contour)
-            points = cv2.boxPoints(area)
-            points = np.int0(points)
-            # draw onto original image
-            cv2.drawContours(imageContours, [points], 0, (0, 255, 0), 2)
+            # Intrduces convex hull for tightest possible fitting still using RBB and min
+
+                # Convex Hull Bounding Boxes	Created by connecting the outermost points of a set of objects, useful for objects with complex shapes
+                hull = cv2.convexHull(estimate) # convex hull usage
+                area = cv2.minAreaRect(hull)
+                points = cv2.boxPoints(area)
+                points = np.int0(points)
+
+                # draw onto original image
+                cv2.drawContours(imageContours, [points], 0, (0, 255, 0), 2)
 
     return imageContours
 

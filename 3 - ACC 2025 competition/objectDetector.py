@@ -21,6 +21,7 @@ print('Sample Time: ', sampleTime)
 counter = 0
 imageWidth = 640
 imageHeight = 480
+croppedImageHeight = int(imageHeight/2)
 #cameraID = '3'
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
@@ -38,25 +39,18 @@ def detect_color(image, color):
     if color == 'white':
         lower = np.array([0,0,127])
         upper = np.array([180,25,255])
-        #frame = detect_white(image, lower, upper)
-        #return frame
     elif color == 'red':
         lower = np.array([0, 100, 100])
         upper = np.array([20, 255, 255])
-        #return detect_white(image, lower, upper)
     elif color == 'yellow':
         lower = np.array([20, 100, 100])
         upper = np.array([30, 255, 255])
-        #frame = detect_white(image, lower, upper)
-        #return frame
     elif color == 'green':
         lower = np.array([40, 30, 100])
         upper = np.array([80, 255, 255])
-        #return detect_white(image, lower, upper)
     elif color == 'blue':
         lower = np.array([100, 150, 50])
         upper = np.array([140, 255, 255])
-        #return detect_white(image, lower, upper)
     else:
         print('Pick a different color')
         return image
@@ -110,22 +104,27 @@ try:
         #opening = cv2.morphologyEx(binr, cv2.MORPH_OPEN, kernel, iterations = 1)
         counter += 1
 
-        # int(imageHeight/2):480 height for all cams
-        leftCropped = leftCam.image_data[int(imageHeight/2):480, 0:640]
-        backCropped = backCam.image_data[int(imageHeight/2):480, 0:640]
-        rightCropped = rightCam.image_data[int(imageHeight/2):480, 0:640]
-        frontCropped = frontCam.image_data[int(imageHeight/2):480, 0:640]
+        # Cropping camera feeds
+        # half height for all cams
+        leftCropped = leftCam.image_data[croppedImageHeight:480, :]
+        backCropped = backCam.image_data[croppedImageHeight:480, :]
+        rightCropped = rightCam.image_data[croppedImageHeight:480, :]
+        frontCropped = frontCam.image_data[croppedImageHeight:480, :]
 
+        # defining barriers to display between the camera feeds
         horizontalBlank = np.zeros((20, 2*imageWidth+60, 3), dtype=np.uint8)
-        verticalBlank = np.zeros((int(imageHeight/2), 20, 3), dtype=np.uint8)
+        verticalBlank = np.zeros((croppedImageHeight, 20, 3), dtype=np.uint8)
 
         # note: adjust ranges; lighting matters
         detect_color(frontCropped, 'white') 
+        detect_color(rightCropped, 'yellow')
         #red_boxes = detect_color(myCam.image_data, 'red') # detects tan instead
         #yellow_boxes = detect_color(myCam.image_data, 'yellow') # widen range
         #green_boxes = detect_color(myCam.image_data, 'green') # range too dark
         #blue_boxes = detect_color(myCam.image_data, 'blue') # range too dark
 
+        # combining all feeds into one multi-feed display
+        # top left = left cam, top right = front cam, bottom left = back cam, bottom right = right cam
         allCams = np.concatenate((horizontalBlank,
                                   np.concatenate((verticalBlank,
                                                   leftCropped,
@@ -152,20 +151,14 @@ try:
         
         # Display the four images
         # note: might still need grayscale; boxes drawn on both frames
-        #cv2.imshow('Left', leftCropped)
-        #cv2.imshow('Back', backCropped)
-        #cv2.imshow('Right', rightCropped)
-        #cv2.imshow('Front', frontCropped)
         cv2.imshow('All Cams', allCams)
-        #cv2.imshow('White', white_boxes)
-        #cv2.imshow('Yellow', yellow_boxes)
         # morpho stuff
         #cv2.imshow(opening, cmap='gray')
         
         # Pause/sleep for sleepTime in milliseconds
-        # show only every 10th frame on VNC
-        if counter % 10 == 0:
-            msSleepTime = int(10000*sleepTime)
+        # show only every 20th frame on VNC
+        if counter % 20 == 0:
+            msSleepTime = int(20000*sleepTime)
             if msSleepTime <= 0:
                 msSleepTime = 1 # this check prevents an indefinite sleep as cv2.waitKey waits indefinitely if input is 0
             cv2.waitKey(msSleepTime)

@@ -85,16 +85,32 @@ def detectHSV(image, color):
 # draws contour boxes around object in original bgr image instead of in grayscale image to help with comparing to HSV
 # does not use erosion or dilation
 def detectGrayscale(image):
+
     # copy of image to be drawn on
     imageContours = image.copy()
     # convert bgr image to grayscale
     grayImage = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     # simple threshold
     # everything with a value above 100 becomes 255 (white)
-    ret, binaryImage = cv2.threshold(grayImage, 100, 255, cv2.THRESH_BINARY)
+
+    # Gaussian blur to reduce noise -- smoothes out grayscale fcn prior to threshold can change sizes dependent on needs
+    # blurredImage = cv2.GaussianBlur(grayImage, (5, 5), 0)
+
+    ret, binaryImage = cv2.threshold(grayImage, 100, 255, cv2.THRESH_BINARY) # blurredImage if using 
     # adaptive threshold; should help with lighting
-    # binaryImage = cv2.adaptiveThreshold(grayImage, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 211, 30)
-    _,contours,_ = cv2.findContours(binaryImage, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    # binaryImage = cv2.adaptiveThreshold(grayImage, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 211, 30) 
+    # Otsu's method could also be helpful helps with varying illumniation levels of colors
+    # Otsu's thresholding -- > ret, binaryImage = cv2.threshold(blurredImage, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Morphological operations to remove noise
+    #kernel = np.ones((5, 5), np.uint8) # kernel can change sizes, larger remove more noise but costwrothy and chain effect
+
+    # lose small holes in the foreground objects and connect nearby objects
+    #morphedImage = cv2.morphologyEx(binaryImage, cv2.MORPH_CLOSE, kernel)
+    # removes small noise points by eroding and then dilating the image
+    #morphedImage = cv2.morphologyEx(morphedImage, cv2.MORPH_OPEN, kernel)
+
+    _,contours,_ = cv2.findContours(binaryImage, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE) # morphed Image if using morph ops
 
     # draw contours
     #Fl - https://www.labelvisor.com/challenges-and-solutions-in-implementing-tight-bounding-boxes/ introduce convex hull bounding
@@ -114,9 +130,9 @@ def detectGrayscale(image):
             # this method changes more often, but can draw rectangles at an angle
             # Intrduces convex hull for tightest possible fitting still using RBB and min
 
-                # Convex Hull Bounding Boxes	Created by connecting the outermost points of a set of objects, useful for objects with complex shapes
-                hull = cv2.convexHull(estimate) # convex hull usage
-                area = cv2.minAreaRect(hull)
+                # Convex Hull Bounding Boxes --- Created by connecting the outermost points of a set of objects, useful for objects with complex shapes
+                hull = cv2.convexHull(estimate) # convex hull usage with estimate rather than orginal -- cleaner/quicker 
+                area = cv2.minAreaRect(hull) 
                 points = cv2.boxPoints(area)
                 points = np.int0(points)
 

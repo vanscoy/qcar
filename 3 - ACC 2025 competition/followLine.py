@@ -49,24 +49,21 @@ gpad = gamepadViaTarget(1)
 # uses erosion and dilation
 # so far only detects one color per call
 def detectHSV(image, color):
+    """
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    white_mask = cv2.inRange(hsv, (0,0,190), (255,65,255))
+    yellow_mask = cv2.inRange(hsv, (15,0,0), (36, 255, 255))
+    mask = cv2.bitwise_or(white_mask, yellow_mask)
+    masked = cv2.bitwise_and(image, image, mask=mask)
+    return masked,0,0,0,0
+    """
+
     if color == 'white':
-        lower = np.array([0,0,127])
+        lower = np.array([0,0,200])
         upper = np.array([180,25,255])
-    elif color == 'red':                    # detects tan instead
-        lower = np.array([0, 100, 100])
-        upper = np.array([20, 255, 255])
-    elif color == 'yellow':                 # widen range
+    elif color == 'yellow':
         lower = np.array([20, 100, 100])
         upper = np.array([30, 255, 255])
-    elif color == 'green':                  # range too dark
-        lower = np.array([40, 30, 100])
-        upper = np.array([80, 255, 255])
-    elif color == 'blue':                   # range too dark
-        lower = np.array([100, 150, 50])
-        upper = np.array([140, 255, 255])
-    else:
-        print('Pick a different color')
-        return image
 
     # Need to set to HSV for proper color usage 
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -119,53 +116,69 @@ def combineFeeds(leftCam, backCam, rightCam, frontCam):
 new = gpad.read()
 try:
     # B button to cancel
+    #prev_center_xf = int(imageWidth/2)
+    #prev_center_yf = int(croppedImageHeight/2)
     while gpad.B != 1:
         start = time.time()
 
-        leftCam.read()
-        backCam.read()
-        rightCam.read()
+        #leftCam.read()
+        #backCam.read()
+        #rightCam.read()
         frontCam.read()
 
         counter += 1
 
         # Cropping camera feeds
         # half height for all cams
-        left = leftCam.image_data[croppedImageHeight:480, :].copy()
-        back = backCam.image_data[croppedImageHeight:480, :].copy()
-        right = rightCam.image_data[croppedImageHeight:480, :].copy()
-        front = frontCam.image_data[croppedImageHeight:480, :].copy()
+        #left = leftCam.image_data[croppedImageHeight:480, :]
+        #back = backCam.image_data[croppedImageHeight:480, :]
+        #right = rightCam.image_data[croppedImageHeight:480, :]
+        front = frontCam.image_data[croppedImageHeight:480, :]
 
-        leftHSV, xl, yl, wl, hl = detectHSV(left, 'yellow')
-        backHSV, xb, yb, wb, hb = detectHSV(back, 'yellow')
-        rightHSV, xr, yr, wr, hr = detectHSV(right, 'yellow')
-        frontHSV, xf, yf, wf, hf = detectHSV(front, 'yellow')
+        #leftHSV, xl, yl, wl, hl = detectHSV(left,'white')
+        #leftHSV, xl, yl, wl, hl = detectHSV(left,'yellow')
+        #backHSV, xb, yb, wb, hb = detectHSV(back,'white')
+        #backHSV, xb, yb, wb, hb = detectHSV(back,'yellow')
+        #rightHSV, xr, yr, wr, hr = detectHSV(right,'white')
+        #rightHSV, xr, yr, wr, hr = detectHSV(right,'yellow')
+        frontHSV, xfw, yfw, wfw, hfw = detectHSV(front,'white')
+        frontHSV, xfy, yfy, wfy, hfy = detectHSV(front,'yellow')
 
-        # red box
-        mid_w = 70
-        mid_h = croppedImageHeight
-        mid_x = int(imageWidth/2 - mid_w/2)
-        mid_y = 0
-        front = cv2.rectangle(front, (mid_x, mid_y), (int(mid_x+mid_w), int(mid_y+mid_h)), (0, 0, 255), 2, cv2.FILLED, 0)
+        """center_xf = int((xfw+wfw + xfy) / 2)
+        center_yf = int(((yfy+hfy) + yfw) / 2)
 
-        center_xf = int(xf + (wf / 2))
-        center_yf = int(yf + (hf / 2))
+        center_x_diff = abs(prev_center_xf - center_xf)
+        center_y_diff = abs(prev_center_yf - center_yf)
+
+        if center_x_diff > 200:
+            center_xf = prev_center_xf
+            center_yf = prev_center_yf
+        elif center_y_diff > 200:
+            center_xf = prev_center_xf
+            center_yf = prev_center_yf"""
 
         #if center_xf != 0 & center_yf != 0:
         #print(center_xf)
         #print(center_yf)
-        frontHSV = cv2.circle(frontHSV, (center_xf, center_yf), 10, (0,0,255), -1)
+        center_xfw = int(xfw + (wfw / 2))
+        center_yfw = int(yfw + (hfw / 2))
+        frontHSV = cv2.circle(frontHSV, (center_xfw, center_yfw), 5, (0,0,255), -1)
 
-        hsvObjects = combineFeeds(leftHSV, backHSV, rightHSV, frontHSV)
+        center_xfy = int(xfy + (wfy / 2))
+        center_yfy = int(yfy + (hfy / 2))
+        frontHSV = cv2.circle(frontHSV, (center_xfy, center_yfy), 5, (0,0,255), -1)
 
-        """if front_cam_box_points[1][1] >= int(mid_x)+70:
-            print('Too far right')
-        elif front_cam_box_points[3][1] <= mid_x:
-            print('Too far left')
-        else:
-            print('centered')"""
+        center_xfc = int((center_xfw+center_xfy-100)/2)
+        center_yfc = int((center_yfw+center_yfy)/2)
+        frontHSV = cv2.circle(frontHSV, (center_xfc, center_yfc), 5, (0,0,255), -1)
 
-        cv2.imshow('HSV Objects', hsvObjects) # Error created here
+        frontHSV = cv2.line(frontHSV, (int(imageWidth/2),0), (int(imageWidth/2),croppedImageHeight), (255,0,0), 5)
+        #center_box = np.array([int(imageWidth/2-30), 0, int(imageWidth/2+30), int(croppedImageHeight)])
+        #frontHSV = cv2.rectangle(frontHSV, (center_box[0], center_box[1]), (center_box[2], center_box[3]), (255,0,0), 5, cv2.FILLED, 0)
+
+        #hsvObjects = combineFeeds(leftHSV, backHSV, rightHSV, frontHSV)
+
+        cv2.imshow('HSV Objects', frontHSV)
 
         # return points of bounding box
         # draw another box in the middle of camera
@@ -174,30 +187,24 @@ try:
         # if left of middle box then turn left
         # https://stackoverflow.com/questions/29739411/what-does-cv2-cv-boxpointsrect-return
 
-        #if os.geteuid() != 0:
-        #    args = ['sudo', sys.executable] + sys.argv + [os.environ]
-        #    os.execlpe('sudo', *args)
-
-
         # attempt at controls for SLAM
         angle = 0
-        if center_xf >= imageWidth/2:
+        if center_xfc >= imageWidth/2:
             # to the right
             angle = -.2
-        elif center_xf < imageWidth/2:
+        elif center_xfc < imageWidth/2:
             angle = .2
 
-        print(center_xf)
-        print(center_yf)
+        print(center_xfc)
+        print(center_yfc)
         print(angle)
         print(imageWidth/2)
         print()
 
         ## Movement and Gamepadxit
         # right trigger for speed
-        '''.075*gpad.RT''' # code to use right trigger for manual testing
         mtr_cmd = np.array([.05, angle]) # need to replace with varius input on encoders and speeds
-        print(gpad.RT)
+        #mtr_cmd = np.array([.075*gpad.RT, angle])
         #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
 
@@ -205,7 +212,8 @@ try:
 
         current, batteryVoltage, encoderCounts = myCar.read_write_std(mtr_cmd, LEDs)
 
-    
+        #prev_center_xf = center_xf
+        #prev_center_yf = center_yf
 
         end = time.time()
         

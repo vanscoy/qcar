@@ -32,7 +32,6 @@ croppedImageHeight = int(imageHeight/2)
 angle = 0
 max_distance = 5
 robot_pos = np.array([0.0, 0.0, 0.0])
-lineBox = []
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Initialize the CSI cameras
@@ -78,18 +77,24 @@ def detectHSV(image, color):
     mask = cv2.inRange(hsv, lower, upper)
     
     _,contours,_ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    x = 0
+    y = 0
+    w = 0
+    h = 0
     
     # Draw bounding boxes around detected green objects
     for contour in contours:
         area = cv2.minAreaRect(contour)
-        points = cv2.boxPoints(area)
-        #print(points)
-        points = np.int0(points)
-        lineBox = points
-        #print(lineBox)
-        cv2.drawContours(image, [points], 0, (0, 255, 0), 2)
+        areaTest = cv2.contourArea(contour)
+        if areaTest >= 100: # causes issues on turn. results in 0'd circle 
+            points = cv2.boxPoints(area)
+            points = np.int0(points)
+            cv2.drawContours(image, [points], 0, (0, 255, 0), 2)
+            x,y,w,h = cv2.boundingRect(contour)
+    #maxArea = max(contours, key = cv2.contourArea)
+    #x,y,w,h = cv2.boundingRect(maxArea)
         
-    return image
+    return image,x,y,w,h
 
 def combineFeeds(leftCam, backCam, rightCam, frontCam):
     # defining barriers to display between the camera feeds
@@ -131,24 +136,31 @@ try:
         right = rightCam.image_data[croppedImageHeight:480, :].copy()
         front = frontCam.image_data[croppedImageHeight:480, :].copy()
 
-        leftHSV = detectHSV(left, 'yellow')
-        backHSV = detectHSV(back, 'yellow')
-        rightHSV = detectHSV(right, 'yellow')
-        frontHSV = detectHSV(front, 'yellow')
+        leftHSV, xl, yl, wl, hl = detectHSV(left, 'yellow')
+        backHSV, xb, yb, wb, hb = detectHSV(back, 'yellow')
+        rightHSV, xr, yr, wr, hr = detectHSV(right, 'yellow')
+        frontHSV, xf, yf, wf, hf = detectHSV(front, 'yellow')
 
+        # red box
         mid_w = 70
         mid_h = croppedImageHeight
         mid_x = int(imageWidth/2 - mid_w/2)
         mid_y = 0
         front = cv2.rectangle(front, (mid_x, mid_y), (int(mid_x+mid_w), int(mid_y+mid_h)), (0, 0, 255), 2, cv2.FILLED, 0)
 
+        center_xf = int(xf + (wf / 2))
+        center_yf = int(yf + (hf / 2))
+
+        #if center_xf != 0 & center_yf != 0:
+        #print(center_xf)
+        #print(center_yf)
+        frontHSV = cv2.circle(frontHSV, (center_xf, center_yf), 10, (0,0,255), -1)
+
         hsvObjects = combineFeeds(leftHSV, backHSV, rightHSV, frontHSV)
 
-        print(lineBox) # Error: linebox is not being returned
-
-        """if lineBox[1][1] >= mid_x+70:
+        """if front_cam_box_points[1][1] >= int(mid_x)+70:
             print('Too far right')
-        elif lineBox[3][1] <= mid_x:
+        elif front_cam_box_points[3][1] <= mid_x:
             print('Too far left')
         else:
             print('centered')"""
@@ -166,20 +178,43 @@ try:
         #    args = ['sudo', sys.executable] + sys.argv + [os.environ]
         #    os.execlpe('sudo', *args)
 
+
+        # attempt at controls for SLAM
+        angle = 0
+        if center_xf >= imageWidth/2:
+            # to the right
+            angle = -.2
+        elif center_xf < imageWidth/2:
+            angle = .2
+
+        print(center_xf)
+        print(center_yf)
+        print(angle)
+        print(imageWidth/2)
+        print()
+
         ## Movement and Gamepadxit
         # right trigger for speed
-        mtr_cmd = np.array([.1*gpad.RT, angle])
+        '''.075*gpad.RT''' # code to use right trigger for manual testing
+        mtr_cmd = np.array([.05, angle]) # need to replace with varius input on encoders and speeds
+        print(gpad.RT)
         #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
 
+        new = gpad.read()
+
+        current, batteryVoltage, encoderCounts = myCar.read_write_std(mtr_cmd, LEDs)
+
+    
+
         end = time.time()
+        
         computationTime = end - start
         sleepTime = sampleTime - ( computationTime % sampleTime )
-        if counter % 10 == 0:
-            msSleepTime = int(10000*sleepTime)
-            if msSleepTime <= 0:
-                msSleepTime = 1 # this check prevents an indefinite sleep as cv2.waitKey waits indefinitely if input is 0
-            cv2.waitKey(msSleepTime)
+        msSleepTime = int(1000*sleepTime)
+        if msSleepTime <= 0:
+            msSleepTime = 1 # this check prevents an indefinite sleep as cv2.waitKey waits indefinitely if input is 0
+        cv2.waitKey(msSleepTime)
 
 except KeyboardInterrupt:
 	print("User interrupted!")

@@ -111,6 +111,7 @@ try:
     #prev_center_yf = int(croppedImageHeight/2)
     while gpad.B != 1:
         start = time.time()
+        print('-----------------------------------------------------------------')
         #leftCam.read()
         #backCam.read()
         #rightCam.read()
@@ -125,20 +126,20 @@ try:
         #binaryr = detectGrayscale(right)
         binaryf = detectGrayscale(front)
 
-        lowest_white_l = 0
-        lowest_white_r = 0
+        max_y_white_l = 0
+        max_y_white_r = 0
         for i in range(0,croppedImageHeight-1):
             whiteLeft = binaryf[i][5]
             whiteRight = binaryf[i][634]
             if whiteLeft == 255:
-                lowest_white_l = i
+                max_y_white_l = i
                 #print(i)
             if whiteRight == 255:
-                lowest_white_r = i
+                max_y_white_r = i
         #print('----------------------------------------------------------------')
-        print(lowest_white_l)
-        print(lowest_white_r)
-        print('-----------------------------------------------------------------')
+        print(max_y_white_l)
+        print(max_y_white_r)
+        
 
         #print(binaryf[int(croppedImageHeight*3/4)])
 
@@ -150,24 +151,51 @@ try:
         # attempt at controls for SLAM
         angle = 0
         # check if the left side is significantly lower than the right and vice versa
-        direction = 'l'
-        if direction == 'r':
-            if lowest_white_l >= 90:
-                # to the right
-                angle = -.2*(lowest_white_l/10)
-            elif lowest_white_l < 70:
-                angle = .2*(lowest_white_l/10)
-        elif direction == 'l':
-            if lowest_white_r >= 90:
-                # to the right
-                angle = .2*(lowest_white_r/10)
-            elif lowest_white_r < 70:
-                angle = .2**(lowest_white_r/10)
+        highThresh = 90
+        lowThresh = 70
+
+        """# this causes errors because it crosses the yellow line
+        # use right line if no errors from lighting
+        if max_y_white_r < croppedImageHeight/2:
+            if max_y_white_r >= max_y_white_l:
+                #turn = 'left'
+                angle = .2*(max_y_white_r - highThresh)*.1
+            elif max_y_white_r < max_y_white_l:
+                #turn = 'right'
+                angle = -.2*(lowThresh - max_y_white_r)*.1
+        # use left line if no errors from lighting
+        elif max_y_white_l < croppedImageHeight/2:
+            if max_y_white_r < max_y_white_l:
+                #turn = 'left'
+                angle = .2*(max_y_white_l - highThresh)*.1
+            elif max_y_white_r >= max_y_white_l:
+                #turn = 'right
+                angle = -.2*(lowThresh - max_y_white_l)*.1"""
+
+        """if max_y_white_r >= max_y_white_l:
+            #turn = 'left'
+            angle = .2*(max_y_white_r - highThresh)*.1
+        elif max_y_white_r < max_y_white_l:
+            #turn = 'right'
+            angle = -.2*(max_y_white_l - highThresh)*.1"""
+            
+        """turn = 'left'
+        if turn == 'right':
+            if max_y_white_l >= highThresh:
+                angle = -.2*(max_y_white_l - highThresh)*.1
+            elif max_y_white_l < lowThresh:
+                angle = .2*(lowThresh - max_y_white_l)*.1
+        elif turn == 'left':
+            if max_y_white_r >= highThresh:
+                angle = .2*(max_y_white_r - highThresh)*.1
+            elif max_y_white_r < lowThresh:
+                angle = -.2*(lowThresh - max_y_white_r)*.1"""
+        print(angle)
 
         ## Movement and Gamepadxit
         # right trigger for speed
-        mtr_cmd = np.array([.066, angle]) # need to replace with varius input on encoders and speeds
-        #mtr_cmd = np.array([.075*gpad.RT, angle])
+        #mtr_cmd = np.array([.066, angle]) # need to replace with varius input on encoders and speeds
+        mtr_cmd = np.array([.066*gpad.RT, angle])
         #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
 

@@ -26,6 +26,7 @@ imageHeight = 720
 max_distance = 5
 robot_pos = np.array([0.0, 0.0, 0.0])
 begin = True
+statement = ""
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Object Initialization
@@ -47,16 +48,15 @@ try:
         new = gpad.read()
         if gpad.A == 1:
             begin = False
-            speed = 0.14
+            statement = "Straight"
 
     while gpad.B != 1:
             start = time.time()
             counter += 1
-            ## Movement and Gamepadxit
-            mtr_cmd = np.array([speed-abs(.1*angle), angle])
-            #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
+            ## Movement
+            mtr_cmd = np.array([speed-abs(.18*angle), angle])
             LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
-	## Adjust LEDs based off steering
+	        ## Adjust LEDs based off steering
             if mtr_cmd[1] > 0.3:
                 LEDs[0] = 1
                 LEDs[2] = 1
@@ -65,17 +65,43 @@ try:
                 LEDs[3] = 1
             if mtr_cmd[0] < 0:
                 LEDs[5] = 1
+            
             ## 122 in = 0.1  = 3.1 m 
             ## turn is 2 m = 0.0645
-            if distance > 0.122:
-                angle = 0.195
-            if distance > 0.194:
-                angle = 0.215
-            if distance > 0.26:
-                angle = 0
-            if distance > 0.36:
+            ## If statements to 'change the states' based off hard coded distance travelled
+            ## Will be changed and updated when incorporating 'look ahead' algorithms
+            if distance >= 0.114:
+                statement = "LTurn"
+            if distance >= 0.18:
+                statement = "HLTurn"
+            if distance >= 0.242:
+                statement = "Straight"
+            if distance >= 0.35:
+                statement = "Stop"
+
+            ## Match-Case does not exist in Python 3.6.9
+            ## So If-elif statements will have to replace them
+            if statement == "Stop":
                 angle = 0
                 speed = 0
+                print("Vehicle is stopped.\n")
+            elif statement == "Straight":
+                angle = 0
+                speed = 0.2
+                print("Vehicle is on path 5.\n")
+            elif statement == "LTurn":
+                angle = 0.197
+                print("Vehicle is on path 4.\n")
+            elif statement == "HLTurn":
+                angle = 0.218
+                print("Vehicle is on path 4.\n")
+            elif statement == "RTurn":
+                angle = -0.33
+                print("Vehicle is on path 4.\n")
+            elif statement == "HRTurn":
+                angle = -0.33
+                print("Vehicle is on path 4.\n")
+
 
             distance += mySpeed.encoder_dist()
 

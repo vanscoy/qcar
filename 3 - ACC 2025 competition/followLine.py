@@ -60,7 +60,7 @@ def detectHSV(image, color):
 
     if color == 'white':
         lower = np.array([0,0,200])
-        upper = np.array([180,25,255])
+        upper = np.array([180,40,255])
     elif color == 'yellow':
         lower = np.array([20, 100, 100])
         upper = np.array([30, 255, 255])
@@ -81,13 +81,18 @@ def detectHSV(image, color):
     
     # Draw bounding boxes around detected green objects
     for contour in contours:
-        area = cv2.minAreaRect(contour)
-        areaTest = cv2.contourArea(contour)
-        if areaTest >= 100: # causes issues on turn. results in 0'd circle 
-            points = cv2.boxPoints(area)
+        box = cv2.minAreaRect(contour)
+        area = cv2.contourArea(contour)
+        if area >= 100: # causes issues on turn. results in 0'd circle 
+            points = cv2.boxPoints(box)
             points = np.int0(points)
             cv2.drawContours(image, [points], 0, (0, 255, 0), 2)
-            x,y,w,h = cv2.boundingRect(contour)
+            tx,ty,tw,th = cv2.boundingRect(contour)
+            if ty >= y:
+                x = tx
+                y = ty
+                w = tw
+                h = th
     #maxArea = max(contours, key = cv2.contourArea)
     #x,y,w,h = cv2.boundingRect(maxArea)
         
@@ -113,6 +118,12 @@ def combineFeeds(leftCam, backCam, rightCam, frontCam):
     
     return allCams
 
+def segmentFeed(image):
+    width = imageHeight / 4
+    for n in range(1,8):
+        image = cv2.line(image, (int(width*n),0), (int(width*n),croppedImageHeight), (0, 0, 0), 5)
+    return image
+
 new = gpad.read()
 try:
     # B button to cancel
@@ -121,26 +132,27 @@ try:
     while gpad.B != 1:
         start = time.time()
 
-        #leftCam.read()
-        #backCam.read()
-        #rightCam.read()
+        leftCam.read()
+        backCam.read()
+        rightCam.read()
         frontCam.read()
 
         counter += 1
 
         # Cropping camera feeds
         # half height for all cams
-        #left = leftCam.image_data[croppedImageHeight:480, :]
-        #back = backCam.image_data[croppedImageHeight:480, :]
-        #right = rightCam.image_data[croppedImageHeight:480, :]
+        left = leftCam.image_data[croppedImageHeight:480, :]
+        back = backCam.image_data[croppedImageHeight:480, :]
+        right = rightCam.image_data[croppedImageHeight:480, :]
         front = frontCam.image_data[croppedImageHeight:480, :]
+        right = segmentFeed(right)
 
-        #leftHSV, xl, yl, wl, hl = detectHSV(left,'white')
-        #leftHSV, xl, yl, wl, hl = detectHSV(left,'yellow')
-        #backHSV, xb, yb, wb, hb = detectHSV(back,'white')
-        #backHSV, xb, yb, wb, hb = detectHSV(back,'yellow')
-        #rightHSV, xr, yr, wr, hr = detectHSV(right,'white')
-        #rightHSV, xr, yr, wr, hr = detectHSV(right,'yellow')
+        leftHSV, xl, yl, wl, hl = detectHSV(left,'white')
+        leftHSV, xl, yl, wl, hl = detectHSV(left,'yellow')
+        backHSV, xb, yb, wb, hb = detectHSV(back,'white')
+        backHSV, xb, yb, wb, hb = detectHSV(back,'yellow')
+        rightHSV, xr, yr, wr, hr = detectHSV(right,'white')
+        rightHSV, xr, yr, wr, hr = detectHSV(right,'yellow')
         frontHSV, xfw, yfw, wfw, hfw = detectHSV(front,'white')
         frontHSV, xfy, yfy, wfy, hfy = detectHSV(front,'yellow')
 
@@ -176,9 +188,11 @@ try:
         #center_box = np.array([int(imageWidth/2-30), 0, int(imageWidth/2+30), int(croppedImageHeight)])
         #frontHSV = cv2.rectangle(frontHSV, (center_box[0], center_box[1]), (center_box[2], center_box[3]), (255,0,0), 5, cv2.FILLED, 0)
 
-        #hsvObjects = combineFeeds(leftHSV, backHSV, rightHSV, frontHSV)
+        hsvObjects = combineFeeds(leftHSV, backHSV, rightHSV, frontHSV)
+        cv2.imshow('HSV Objects', hsvObjects)
 
-        cv2.imshow('HSV Objects', frontHSV)
+        #cv2.imshow('Left', leftHSV)
+        #cv2.imshow('Right', rightHSV)
 
         # return points of bounding box
         # draw another box in the middle of camera
@@ -203,8 +217,8 @@ try:
 
         ## Movement and Gamepadxit
         # right trigger for speed
-        mtr_cmd = np.array([.05, angle]) # need to replace with varius input on encoders and speeds
-        #mtr_cmd = np.array([.075*gpad.RT, angle])
+        #mtr_cmd = np.array([.05, angle]) # need to replace with varius input on encoders and speeds
+        mtr_cmd = np.array([.075*gpad.RT, angle])
         #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
 

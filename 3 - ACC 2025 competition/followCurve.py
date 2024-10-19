@@ -81,8 +81,6 @@ def detectGrayscale(image):
             area = cv2.minAreaRect(contour)
             points = cv2.boxPoints(area)
             points = np.int0(points)
-            # draw onto original image
-            cv2.drawContours(image, [points], 0, (0, 255, 0), 2)
 
     return binaryImage
 
@@ -113,38 +111,62 @@ try:
     #prev_center_yf = int(croppedImageHeight/2)
     while gpad.B != 1:
         start = time.time()
+        #leftCam.read()
+        #backCam.read()
+        #rightCam.read()
         frontCam.read()
         counter += 1
+        #left = leftCam.image_data[croppedImageHeight:480, :]
+        #back = backCam.image_data[croppedImageHeight:480, :]
+        #right = rightCam.image_data[croppedImageHeight:480, :]
         front = frontCam.image_data[croppedImageHeight:480, :]
-        binary = detectGrayscale(front)
+        #binaryl = detectGrayscale(left)
+        #binaryb = detectGrayscale(back)
+        #binaryr = detectGrayscale(right)
+        binaryf = detectGrayscale(front)
 
-        cv2.imshow('Contour Image', front)
-        cv2.imshow('Binary Image', binary)
+        lowest_white_l = 0
+        lowest_white_r = 0
+        for i in range(0,croppedImageHeight-1):
+            whiteLeft = binaryf[i][5]
+            whiteRight = binaryf[i][634]
+            if whiteLeft == 255:
+                lowest_white_l = i
+                #print(i)
+            if whiteRight == 255:
+                lowest_white_r = i
+        #print('----------------------------------------------------------------')
+        print(lowest_white_l)
+        print(lowest_white_r)
+        print('-----------------------------------------------------------------')
 
-        # return points of bounding box
-        # draw another box in the middle of camera
-        # check if points returned are within the middle box
-        # if right of middle box then turn right
-        # if left of middle box then turn left
-        # https://stackoverflow.com/questions/29739411/what-does-cv2-cv-boxpointsrect-return
+        #print(binaryf[int(croppedImageHeight*3/4)])
+
+        #cv2.imshow('Contour Image', front)
+        #cv2.imshow('Binary Left Image', binaryl)
+        #cv2.imshow('Binary Right Image', binaryr)
+        cv2.imshow('Binary Front Image', binaryf)
 
         # attempt at controls for SLAM
-        """angle = 0
-        if center_xfc >= imageWidth/2:
-            # to the right
-            angle = -.2
-        elif center_xfc < imageWidth/2:
-            angle = .2
-
-        print(center_xfc)
-        print(center_yfc)
-        print(angle)
-        print(imageWidth/2)
-        print()
+        angle = 0
+        # check if the left side is significantly lower than the right and vice versa
+        direction = 'l'
+        if direction == 'r':
+            if lowest_white_l >= 90:
+                # to the right
+                angle = -.2*(lowest_white_l/10)
+            elif lowest_white_l < 70:
+                angle = .2*(lowest_white_l/10)
+        elif direction == 'l':
+            if lowest_white_r >= 90:
+                # to the right
+                angle = .2*(lowest_white_r/10)
+            elif lowest_white_r < 70:
+                angle = .2**(lowest_white_r/10)
 
         ## Movement and Gamepadxit
         # right trigger for speed
-        mtr_cmd = np.array([.05, angle]) # need to replace with varius input on encoders and speeds
+        mtr_cmd = np.array([.066, angle]) # need to replace with varius input on encoders and speeds
         #mtr_cmd = np.array([.075*gpad.RT, angle])
         #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
@@ -154,7 +176,7 @@ try:
         current, batteryVoltage, encoderCounts = myCar.read_write_std(mtr_cmd, LEDs)
 
         #prev_center_xf = center_xf
-        #prev_center_yf = center_yf"""
+        #prev_center_yf = center_yf
 
         end = time.time()
         

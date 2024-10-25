@@ -71,18 +71,7 @@ def detectGrayscale(image):
     # removes small noise points by eroding and then dilating the image
     morphedImage = cv2.morphologyEx(morphedImage, cv2.MORPH_OPEN, kernel)
 
-    _,contours,_ = cv2.findContours(morphedImage, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE) # morphed Image if using morph ops
-
-    # draw contours
-    #Fl - https://www.labelvisor.com/challenges-and-solutions-in-implementing-tight-bounding-boxes/ introduce convex hull bounding
-    # set below but not above 
-    for contour in contours:
-
-            area = cv2.minAreaRect(contour)
-            points = cv2.boxPoints(area)
-            points = np.int0(points)
-
-    return binaryImage
+    return morphedImage
 
 def combineFeeds(leftCam, backCam, rightCam, frontCam):
     # defining barriers to display between the camera feeds
@@ -107,124 +96,93 @@ def combineFeeds(leftCam, backCam, rightCam, frontCam):
 new = gpad.read()
 try:
     # B button to cancel
-    #prev_center_xf = int(imageWidth/2)
-    #prev_center_yf = int(croppedImageHeight/2)
     while gpad.B != 1:
         start = time.time()
         print('-----------------------------------------------------------------')
-        #leftCam.read()
-        #backCam.read()
-        #rightCam.read()
         frontCam.read()
         counter += 1
-        #left = leftCam.image_data[croppedImageHeight:480, :]
-        #back = backCam.image_data[croppedImageHeight:480, :]
-        #right = rightCam.image_data[croppedImageHeight:480, :]
         front = frontCam.image_data[croppedImageHeight:480, :]
-        #binaryl = detectGrayscale(left)
-        #binaryb = detectGrayscale(back)
-        #binaryr = detectGrayscale(right)
         binaryf = detectGrayscale(front)
 
-        max_y_white_l = 0
-        max_y_white_r = 0
+        maxY5 = 0
+        maxY160 = 0
+        maxY320 = 0
+        maxY480 = 0
+        maxY634 = 0
         for i in range(0,croppedImageHeight-1):
-            whiteLeft = binaryf[i][5]
-            whiteRight = binaryf[i][634]
-            if whiteLeft == 255:
-                max_y_white_l = i
-                #print(i)
-            if whiteRight == 255:
-                max_y_white_r = i
-        #print('----------------------------------------------------------------')
-        print(max_y_white_l)
-        print(max_y_white_r)
+            white5 = binaryf[i][5]
+            if white5 == 255:
+                maxY5 = i
+            white160 = binaryf[i][160]
+            if white160 == 255:
+                maxY160 = i
+            white320 = binaryf[i][320]
+            if white320 == 255:
+                maxY320 = i
+            white480 = binaryf[i][480]
+            if white480 == 255:
+                maxY480 = i
+            white634 = binaryf[i][634]
+            if white634 == 255:
+                maxY634 = i
+        #print(maxYl)
+        #print(maxYr)
+        print('Max on Col 5 =', maxY5)
+        print('Max on Col 160 =', maxY160)
+        print('Max on Col 320 =', maxY320)
+        print('Max on Col 480 =', maxY480)
+        print('Max on Col 634 =', maxY634)
         
-
-        #print(binaryf[int(croppedImageHeight*3/4)])
-
-        #cv2.imshow('Contour Image', front)
-        #cv2.imshow('Binary Left Image', binaryl)
-        #cv2.imshow('Binary Right Image', binaryr)
+        
         cv2.imshow('Binary Front Image', binaryf)
 
         # attempt at controls for SLAM
         angle = 0
         # check if the left side is significantly lower than the right and vice versa
-        highThresh = 90
-        lowThresh = 70
-
-        """yDiff = abs(max_y_white_l - max_y_white_r)
-        print(yDiff)
-        # straight section
-        if yDiff < 20:
-            if max_y_white_r >= max_y_white_l:
-                #turn = 'left'
-                angle = max_y_white_r/400
-            elif max_y_white_r < max_y_white_l:
-                #turn = 'right'
-                angle = -1*max_y_white_l/400
-        # curve
-        else:
-            """
-        # this causes errors because it crosses the yellow line
-        # use right line if no errors from lighting
+        highThresh = 160
+        lowThresh = 150
+        #"""
+        turn = 'r'
         """
-        if max_y_white_r < croppedImageHeight/2:
-            if max_y_white_r >= max_y_white_l:
-                #turn = 'left'
-                angle = .2*(max_y_white_r - highThresh)*.1
-            elif max_y_white_r < max_y_white_l:
-                #turn = 'right'
-                angle = -.2*(lowThresh - max_y_white_r)*.1
-        # use left line if no errors from lighting
-        elif max_y_white_l < croppedImageHeight/2:
-            if max_y_white_r < max_y_white_l:
-                #turn = 'left'
-                angle = .2*(max_y_white_l - highThresh)*.1
-            elif max_y_white_r >= max_y_white_l:
-                #turn = 'right
-                angle = -.2*(lowThresh - max_y_white_l)*.1
+        if maxY5 >= maxY160 and maxY160 >= maxY320:
+            turn = 'r'
+        elif maxY634 >= maxY480 and maxY480 >= maxY320:
+            turn = 'l'
         #"""
-        """
-        if max_y_white_r >= max_y_white_l:
-            #turn = 'left'
-            angle = max_y_white_r/400
-        elif max_y_white_r < max_y_white_l:
-            #turn = 'right'
-            angle = -1*max_y_white_l/400
-        #"""
-        #"""
-        turn = 'l'
+        if (maxY5 - maxY160) < 70 and (maxY5 - maxY160) >= 40 and maxY5 >= 120:
+            turn = 'r'
+            print('thing1')
+        elif (maxY634 - maxY480) < 70 and (maxY634 - maxY480) >= 30 and maxY634 >= 120:
+            turn = 'l'
+            print('thing2')
+        print('Turn Direction =', turn)
+        #right turn and straight
         if turn == 'r':
-            if max_y_white_l >= highThresh:
-                angle = -.2*(max_y_white_l - highThresh)*.1
-            elif max_y_white_l < lowThresh:
-                angle = .2*(lowThresh - max_y_white_l)*.1
+            if maxY5 <= 120 or maxY5 >= highThresh:
+                angle = -.2*(abs(maxY5 - highThresh))*.1
+            elif maxY5 < lowThresh:
+                angle = .2*(lowThresh - maxY5)*.1
+        # left turn
         elif turn == 'l':
-            if max_y_white_r >= highThresh:
-                angle = .2*(max_y_white_r - highThresh)*.1
-            elif max_y_white_r < lowThresh:
-                angle = -.2*(lowThresh - max_y_white_r)*.1
+            if maxY634 <= 120 or maxY634 >= highThresh:
+                angle = .2*(maxY634 - highThresh)*.1
+            elif maxY634 < lowThresh:
+                angle = -.2*(lowThresh - maxY634)*.1
         #"""
-        print(angle)
-        """for i in range(0, imageWidth-1):
-            if binaryf[120][i] == 255:
-                print(i)"""
+        print('Angle =',angle)
 
         ## Movement and Gamepadxit
         # right trigger for speed
+        #speed = 0.066*gpad.RT
+        speed = 0.066
         #mtr_cmd = np.array([.066, angle]) # need to replace with varius input on encoders and speeds
-        mtr_cmd = np.array([.066*gpad.RT, angle])
-        #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
+        mtr_cmd = np.array([speed, angle])
+        print('Speed =',speed)
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
 
         new = gpad.read()
 
         current, batteryVoltage, encoderCounts = myCar.read_write_std(mtr_cmd, LEDs)
-
-        #prev_center_xf = center_xf
-        #prev_center_yf = center_yf
 
         end = time.time()
         

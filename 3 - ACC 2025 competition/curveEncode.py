@@ -45,6 +45,7 @@ frontCam = Camera2D(camera_id="3", frame_width=imageWidth, frame_height=imageHei
 myCar = QCar()
 gpad = gamepadViaTarget(1) 
 speed = speedCalc(robot_pos, myCar)
+mtrSpeed = .066
 
 # function to detect objects based on HSV color
 # draws contour boxes around object in original bgr image instead of in HSV image to help with comparing to grayscale
@@ -110,23 +111,23 @@ try:
     # B button to cancel
     #prev_center_xf = int(imageWidth/2)
     #prev_center_yf = int(croppedImageHeight/2)
-    left = leftCam.image_data[croppedImageHeight:480, :]
-    back = backCam.image_data[croppedImageHeight:480, :]
-    right = rightCam.image_data[croppedImageHeight:480, :]
+    #left = leftCam.image_data[croppedImageHeight:480, :]
+    #back = backCam.image_data[croppedImageHeight:480, :]
+    #right = rightCam.image_data[croppedImageHeight:480, :]
     front = frontCam.image_data[croppedImageHeight:480, :]
     while gpad.B != 1:
         start = time.time()
         print('-----------------------------------------------------------------')
-        leftCam.read()
-        backCam.read()
-        rightCam.read()
+        #leftCam.read()
+        #backCam.read()
+        #rightCam.read()
         frontCam.read()
         counter += 1
-        binaryl = detectGrayscale(left)
-        binaryb = detectGrayscale(back)
-        binaryr = detectGrayscale(right)
+        #binaryl = detectGrayscale(left)
+        #binaryb = detectGrayscale(back)
+        #binaryr = detectGrayscale(right)
         binaryf = detectGrayscale(front)
-        print(time.time() - start)
+        #print(time.time() - start)
 
         lowest_white_l = 0
         lowest_white_r = 0
@@ -141,19 +142,19 @@ try:
         #print('----------------------------------------------------------------')
         #print(lowest_white_l)
         #print(lowest_white_r)
-        #print(speed.encoder_speed()) # Speed Units: m/s
-        print(time.time() - start)
+        print(speed.encoder_speed()) # Speed Units: m/s
+        print(angle) # Speed Units: m/s
+        #print(time.time() - start)
         # Reference: Motor speed is in Watts?
-        
 
         #print(binaryf[int(croppedImageHeight*3/4)])
         #cv2.imshow('Contour Image', front)
         #cv2.imshow('Binary Left Image', binaryl)
         #cv2.imshow('Binary Right Image', binaryr)
-        #cv2.imshow('Binary Front Image', binaryf)
-        allCams = combineFeeds(left, back, right, front)
-        cv2.imshow('All Feeds', allCams)
-        print(time.time() - start)
+        cv2.imshow('Binary Front Image', binaryf)
+        #allCams = combineFeeds(left, back, right, front)
+        #cv2.imshow('All Feeds', allCams)
+        #print(time.time() - start)
 
         # attempt at controls for SLAM
         angle = 0
@@ -174,15 +175,30 @@ try:
 
         if lowest_white_l >= 90:
             # to the right
-            angle = -.2*(lowest_white_l/10)
+            angle = -.035*(lowest_white_l/10)
         elif lowest_white_l < 70:
-            angle = .2*(lowest_white_l/10)
+            angle = .035*(lowest_white_l/10)
 
         ## Movement and Gamepadxit
         # right trigger for speed
-        mtr_cmd = np.array([.066, angle]) # need to replace with varius input on encoders and speeds
+        mtr_cmd = np.array([mtrSpeed, angle]) # need to replace with varius input on encoders and speeds
         #mtr_cmd = np.array([.075*gpad.RT, angle])
         #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
+
+        while (speed.encoder_speed() < .3 and angle < 0):
+            #mtrSpeed = mtrSpeed + .001
+            angle = angle + 1
+        while (speed.encoder_speed() < .3 and angle > 0):
+            #mtrSpeed = mtrSpeed + .001
+            angle = angle - 1
+        while (speed.encoder_speed() > .3 and angle < 0):
+            #mtrSpeed = mtrSpeed - .001
+            angle = angle + 1
+        while (speed.encoder_speed() > .3 and angle > 0):
+            #mtrSpeed = mtrSpeed - .001
+            angle = angle - 1
+        #mtrSpeed = .066
+
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
 
         new = gpad.read()
@@ -193,7 +209,7 @@ try:
         #prev_center_yf = center_yf
 
         end = time.time()
-        print(end - start)
+        #print(end - start)
         
         computationTime = end - start
         sleepTime = sampleTime - ( computationTime % sampleTime )
@@ -201,7 +217,7 @@ try:
         if msSleepTime <= 0:
             msSleepTime = 1 # this check prevents an indefinite sleep as cv2.waitKey waits indefinitely if input is 0
         cv2.waitKey(msSleepTime)
-        print(time.time() - start)
+        #print(time.time() - start)
 
 except KeyboardInterrupt:
 	print("User interrupted!")

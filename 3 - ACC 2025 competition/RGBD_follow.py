@@ -1,5 +1,6 @@
-from Quanser.q_essential import Camera2D
+from Quanser.q_essential import Camera3D
 from Quanser.q_ui import gamepadViaTarget
+import Quanser.q_interpretation as qi 
 from Quanser.product_QCar import QCar
 from matplotlib import pyplot as plt
 import time
@@ -35,11 +36,10 @@ robot_pos = np.array([0.0, 0.0, 0.0])
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Initialize the CSI cameras
-#myCam = Camera2D(camera_id=cameraID, frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
-rightCam = Camera2D(camera_id="0", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
-backCam = Camera2D(camera_id="1", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
-leftCam = Camera2D(camera_id="2", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
-frontCam = Camera2D(camera_id="3", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
+myCam1 = Camera3D(mode='RGB', frame_width_RGB=imageWidth, frame_height_RGB=imageHeight)
+max_distance = 2
+min_distance = 1
+begin = True
 
 myCar = QCar()
 gpad = gamepadViaTarget(1) 
@@ -84,46 +84,25 @@ def detectGrayscale(image):
 
     return binaryImage
 
-def combineFeeds(leftCam, backCam, rightCam, frontCam):
-    # defining barriers to display between the camera feeds
-    horizontalBlank = np.zeros((20, 2*imageWidth+60, 3), dtype=np.uint8)
-    verticalBlank = np.zeros((croppedImageHeight, 20, 3), dtype=np.uint8)
-
-    # combine all images into one array
-    allCams = np.concatenate(
-        (horizontalBlank,
-            np.concatenate(
-                (verticalBlank, leftCam, verticalBlank, frontCam, verticalBlank),
-                axis = 1),
-            horizontalBlank,
-            np.concatenate(
-                (verticalBlank, backCam, verticalBlank, rightCam, verticalBlank),
-                axis = 1),
-            horizontalBlank),
-        axis=0)
-    
-    return allCams
-
 new = gpad.read()
 try:
+    # A button to start
+    while begin:
+        print('-----------------------------------------------------------------')
+        new = gpad.read()
+        if gpad.A == 1:
+            begin = False
+            speed = 0.074
     # B button to cancel
     #prev_center_xf = int(imageWidth/2)
     #prev_center_yf = int(croppedImageHeight/2)
     while gpad.B != 1:
         start = time.time()
         print('-----------------------------------------------------------------')
-        #leftCam.read()
-        #backCam.read()
-        #rightCam.read()
-        frontCam.read()
+        myCam1.read_RGB()
         counter += 1
-        #left = leftCam.image_data[croppedImageHeight:480, :]
-        #back = backCam.image_data[croppedImageHeight:480, :]
-        #right = rightCam.image_data[croppedImageHeight:480, :]
-        front = frontCam.image_data[croppedImageHeight:480, :]
-        #binaryl = detectGrayscale(left)
-        #binaryb = detectGrayscale(back)
-        #binaryr = detectGrayscale(right)
+
+        front = myCam1.image_buffer_RGB[croppedImageHeight:480, :]
         binaryf = detectGrayscale(front)
 
         max_y_white_l = 0
@@ -140,19 +119,13 @@ try:
         print(max_y_white_l)
         print(max_y_white_r)
         
-
-        #print(binaryf[int(croppedImageHeight*3/4)])
-
-        #cv2.imshow('Contour Image', front)
-        #cv2.imshow('Binary Left Image', binaryl)
-        #cv2.imshow('Binary Right Image', binaryr)
         cv2.imshow('Binary Front Image', binaryf)
 
         # attempt at controls for SLAM
         angle = 0
         # check if the left side is significantly lower than the right and vice versa
-        highThresh = 90
-        lowThresh = 70
+        highThresh = 150
+        lowThresh = 130
 
         """yDiff = abs(max_y_white_l - max_y_white_r)
         print(yDiff)
@@ -195,7 +168,7 @@ try:
             angle = -1*max_y_white_l/400
         #"""
         #"""
-        turn = 'l'
+        turn = 'r'
         if turn == 'r':
             if max_y_white_l >= highThresh:
                 angle = -.2*(max_y_white_l - highThresh)*.1
@@ -215,7 +188,7 @@ try:
         ## Movement and Gamepadxit
         # right trigger for speed
         #mtr_cmd = np.array([.066, angle]) # need to replace with varius input on encoders and speeds
-        mtr_cmd = np.array([.066*gpad.RT, angle])
+        mtr_cmd = np.array([speed, angle])
         #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
 
@@ -238,10 +211,7 @@ try:
 except KeyboardInterrupt:
 	print("User interrupted!")
 finally:
-    leftCam.terminate()
-    backCam.terminate()
-    rightCam.terminate()
-    frontCam.terminate()
+    myCam1.terminate()
     gpad.terminate()
     myCar.terminate()
     plt.close() 

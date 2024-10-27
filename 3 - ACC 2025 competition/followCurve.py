@@ -41,8 +41,9 @@ gpad = gamepadViaTarget(1)
 # applies erosion and dilation to reduce error
 # kernel is (5,5)
 def BGR2Binary(image):
+    image2 = image.copy()
     # convert bgr image to grayscale
-    grayImage = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    grayImage = cv2.cvtColor(image2, cv2.COLOR_BGR2GRAY)
     # Gaussian blur to reduce noise -- smoothes out grayscale fcn prior to threshold; can change sizes dependent on needs
     blurredImage = cv2.GaussianBlur(grayImage, (5, 5), 0)
     # simple threshold: every pixel with value > 100 becomes 255 (white)
@@ -87,7 +88,7 @@ def findLowestWhite(image, cols):
     print('Columns to search on:', cols)
     maxY = [0] * len(cols)
     # iterate through each pixel in a column
-    for y in range(0, croppedImageHeight-1):
+    for y in range(0, croppedImageHeight):
         for x in range(0, len(cols)):
             if image[y][cols[x]] == 255:
                 maxY[x] = y
@@ -149,7 +150,7 @@ def setAngle(maxY, turn):
 # manual is a boolean that checks if we are controlling the car speed with the gamepad
 # speed mod is a modifier for the speed value from the gamepad. Defaults to 0.066
 def setSpeed(angle, prev_angle, prev_speed, counter, turn, manual, speed_mod=0.066):
-    speed = 0.066
+    speed = 0.08 #0.075
     angleMag = abs(angle)
     if manual == True:
         new = gpad.read()
@@ -216,7 +217,31 @@ def straightSpeed():
 def driveInLane(image):
     return
 
+# usually around 4-5
+# a few outliers mess this up, especially at start; maybe reject outliers
+# frameTimeList[0] is a huge outlier
+# seems to take about 4-5 cycles for frame time to stabilize
+# maybe graph frame time
+# I could simply hardcode framerate for the video but I would like to be able to use this in the loop as well
+def frameRate(frameTimeList):
+    meanFrameTime = (sum(frameTimeList) - frameTimeList[0]) / len(frameTimeList)
+    fps = 1/meanFrameTime
+    return fps
+
+# frames is an list of frames that will be used to make the video
+# filename is the name of the video (including the relative path to video) and ends with .avi
+# fps is the framerate as a float
+# isColor is a boolean that tells us if the video will be in color
+# maybe add time and date to filename
+# add terminal output to frames
+def saveVideo(frames, filename, fps, isColor):
+    makeVid = cv2.VideoWriter(filename, cv2.VideoWriter_fourcc(*'XVID'), fps, (imageWidth,croppedImageHeight), isColor)
+    for i in range(0,len(frames)):
+        makeVid.write(frames[i])
+    makeVid.release()
+
 new = gpad.read()
+frameTimeList = list()
 try:
     LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
     angle = 0
@@ -224,10 +249,11 @@ try:
     manual = False
     prev_speed = 0
     prev_angle = 0
+    frameTime = 0
     # B button to cancel
     while gpad.B != 1:
         print('-----------------------------------------------------------------')
-        start = time.time()
+        startFrame = time.time()
         frontCam.read()
         counter += 1
         front = frontCam.image_data[croppedImageHeight:480, :]
@@ -253,13 +279,16 @@ try:
         new = gpad.read()
 
         # wait statement
-        end = time.time()
-        computationTime = end - start
+        endCompute = time.time()
+        computationTime = endCompute - startFrame
         sleepTime = sampleTime - ( computationTime % sampleTime )
         msSleepTime = int(1000*sleepTime)
         if msSleepTime <= 0:
             msSleepTime = 1 # this check prevents an indefinite sleep as cv2.waitKey waits indefinitely if input is 0
         cv2.waitKey(msSleepTime)
+        endFrame = time.time()
+        frameTime = endFrame - startFrame
+        frameTimeList.append(frameTime)
 
 except KeyboardInterrupt:
 	print("User interrupted!")
@@ -267,4 +296,6 @@ finally:
     frontCam.terminate()
     gpad.terminate()
     myCar.terminate()
+    #fps = frameRate(frameTimeList)
+    #saveVideo(frames, filename, fps, isColor)
     plt.close() 

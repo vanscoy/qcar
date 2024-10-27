@@ -13,6 +13,8 @@ import utils
 
 # Next steps, refine process and how to continue from stop sign --> create more legitamte coloring and sizing 
 # AI involvment? --> clean up code, figure out best way to run live
+# opearte based on fact that white line is in front of stop sign 
+
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Timing Parameters and methods 
@@ -219,9 +221,9 @@ def detectStopLight(image, showImage = False):
 
     if showImage:
         cv2.imshow('Bouding Boxes SL', image)
-        #cv2.imshow('Red Mask SL', red_mask)
-        #cv2.imshow('Yellow Mask SL', yellow_mask)
-        #cv2.imshow('Green Mask SL', green_mask)
+        cv2.imshow('Red Mask SL', red_mask)
+        cv2.imshow('Yellow Mask SL', yellow_mask)
+        cv2.imshow('Green Mask SL', green_mask)
         #cv2.waitKey(1)  # Wait for a brief moment
 
     if red_area > area_threshold:

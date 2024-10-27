@@ -14,9 +14,6 @@ import utils
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Timing Parameters and methods 
 startTime = time.time()
-def elapsed_time():
-    return time.time() - startTime
-
 sampleRate = 30.0
 sampleTime = 1/sampleRate
 simulationTime = 10.0
@@ -35,37 +32,25 @@ robot_pos = np.array([0.0, 0.0, 0.0])
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Initialize the CSI cameras
-#myCam = Camera2D(camera_id=cameraID, frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
-rightCam = Camera2D(camera_id="0", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
-backCam = Camera2D(camera_id="1", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
-leftCam = Camera2D(camera_id="2", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
 frontCam = Camera2D(camera_id="3", frame_width=imageWidth, frame_height=imageHeight, frame_rate=sampleRate)
 
 myCar = QCar()
-gpad = gamepadViaTarget(1) 
+gpad = gamepadViaTarget(1)
 
-# function to detect objects based on HSV color
-# draws contour boxes around object in original bgr image instead of in HSV image to help with comparing to grayscale
-# uses erosion and dilation
-# so far only detects one color per call
-def detectGrayscale(image):
+# converts an BGR image to a binary image
+# applies erosion and dilation to reduce error
+# kernel is (5,5)
+def BGR2Binary(image):
     # convert bgr image to grayscale
     grayImage = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # simple threshold
-    # everything with a value above 100 becomes 255 (white)
-
     # Gaussian blur to reduce noise -- smoothes out grayscale fcn prior to threshold; can change sizes dependent on needs
     blurredImage = cv2.GaussianBlur(grayImage, (5, 5), 0)
-
-    ret, binaryImage = cv2.threshold(blurredImage, 100, 255, cv2.THRESH_BINARY) # blurredImage if using 
-    # adaptive threshold; should help with lighting
-    # binaryImage = cv2.adaptiveThreshold(blurredImage, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 71, 20) 
-    # Otsu's method could also be helpful helps with varying illumniation levels of colors
-    #ret, binaryImage = cv2.threshold(blurredImage, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # simple threshold: every pixel with value > 100 becomes 255 (white)
+    ret, binaryImage = cv2.threshold(blurredImage, 100, 255, cv2.THRESH_BINARY)
     
     # Morphological operations to remove noise
-    kernel = np.ones((5, 5), np.uint8) # kernel can change sizes, larger remove more noise but costwrothy and chain effect
-
+    # kernel can change sizes, larger remove more noise but costwrothy and chain effect
+    kernel = np.ones((5, 5), np.uint8)
     # lose small holes in the foreground objects and connect nearby objects
     morphedImage = cv2.morphologyEx(binaryImage, cv2.MORPH_CLOSE, kernel)
     # removes small noise points by eroding and then dilating the image
@@ -73,6 +58,8 @@ def detectGrayscale(image):
 
     return morphedImage
 
+# function to format the display of multiple camera feeds
+# currently set for display of all 4 cams
 def combineFeeds(leftCam, backCam, rightCam, frontCam):
     # defining barriers to display between the camera feeds
     horizontalBlank = np.zeros((20, 2*imageWidth+60, 3), dtype=np.uint8)
@@ -93,99 +80,177 @@ def combineFeeds(leftCam, backCam, rightCam, frontCam):
     
     return allCams
 
+# Function to find the highest y value of the white pixels in each given column
+# image is a binary image as a 2d integer array where each element is 0 or 255
+# cols is an integer array contain each column we want to search on
+def findLowestWhite(image, cols):
+    print('Columns to search on:', cols)
+    maxY = [0] * len(cols)
+    # iterate through each pixel in a column
+    for y in range(0, croppedImageHeight-1):
+        for x in range(0, len(cols)):
+            if image[y][cols[x]] == 255:
+                maxY[x] = y
+    print('Max Y values:        ', maxY)
+    return maxY
+
+# Function to determine which direction the car should turn on a curve
+# returns 's' = straight, 'l' = left, 'r' = right
+def findDirection(maxY):
+    turn = 's'
+    if maxY[0] >= maxY[1] and maxY[1] >= maxY[2]:
+        turn = 'r'
+    elif maxY[4] >= maxY[3] and maxY[3] >= maxY[2]:
+        turn = 'l'
+    if (maxY[0] - maxY[1]) < 70 and (maxY[0] - maxY[1]) >= 40 and maxY[0] >= 120:
+        turn = 'r'
+    elif (maxY[4] - maxY[3]) < 70 and (maxY[4] - maxY[3]) >= 30 and maxY[4] >= 120:
+        turn = 'l'
+    if maxY[0] >= 150 and maxY[0] <= 160 and maxY[4] >= 150 and maxY[4] <= 160:
+        turn = 's'
+    print('Turn Direction =', turn)
+    return turn
+
+# Function to determine the angle that the car should turn at
+# adjusts angle based on how far off it is
+def setAngle(maxY, turn):
+    angle = 0
+    highThresh = 160
+    lowThresh = 150
+    #right turn and straight
+    if turn == 'r':
+        if maxY[0] <= 120 or maxY[0] >= highThresh:
+            angle = -.02*(abs(maxY[0] - highThresh))
+        elif maxY[0] < lowThresh:
+            angle = .02*(lowThresh - maxY[0])
+    # left turn
+    elif turn == 'l':
+        if maxY[4] <= 120 or maxY[4] >= highThresh:
+            angle = .02*(maxY[4] - highThresh)
+        elif maxY[4] < lowThresh:
+            angle = -.02*(lowThresh - maxY[4])
+    elif turn == 's':
+        if maxY[0] <= 120 or maxY[0] >= highThresh:
+            angle = -.02*(abs(maxY[0] - highThresh))
+        elif maxY[0] < lowThresh:
+            angle = .02*(lowThresh - maxY[0])
+    if angle > 0.5:
+        angle = 0.4
+    elif angle < -0.5:
+        angle = -0.4
+    print('Angle =',angle)
+    return angle
+
+# Function to set and change the speed of the car
+# angle is a float. Sets speed based on sharpness of turn
+# prev_angle was the angle last iteration
+# prev_speed was the speed last iteration
+# elapsed_time is the time between last iteration and this iteration
+# manual is a boolean that checks if we are controlling the car speed with the gamepad
+# speed mod is a modifier for the speed value from the gamepad. Defaults to 0.066
+def setSpeed(angle, prev_angle, prev_speed, counter, turn, manual, speed_mod=0.066):
+    speed = 0.066
+    angleMag = abs(angle)
+    if manual == True:
+        new = gpad.read()
+        speed = speed_mod*gpad.RT
+    elif turn == 's':
+        # keep speed for 4 iterations so that the speed change can actually be in effect
+        if counter % 4 != 0:
+            speed = prev_speed
+        elif angleMag >= 0.2:
+            speed = speed * 0.8
+        elif angleMag >= 0.1:
+            speed = speed * 0.9
+        else:
+            speed = speed * 1.1
+    else:
+        if angleMag >= 0.35:
+            speed = speed * 0.95
+        else:
+            speed = speed
+        '''
+        # keep speed for 4 iterations so that the speed change can actually be in effect
+        if counter % 4 != 0:
+            speed = prev_speed
+        elif prev_angle * angle < 0:
+            if angleMag >= 0.35:
+                speed = speed * 0.8
+            elif angleMag >= 0.1:
+                speed = speed * 0.9
+            else:
+                speed = speed * 1.05
+        else:
+            if angleMag >= 0.35:
+                speed = speed * 0.9
+            elif angleMag >= 0.1:
+                speed = speed * 0.95
+            else:
+                speed = speed * 1.1
+        '''
+    print('Speed =',speed)
+    return speed
+
+# Function to determine which section of the track the car is on
+def findSection():
+    return
+
+def leftCurveAngle():
+    return angle
+
+def rightCurveAngle():
+    return angle
+
+def straightAngle():
+    return angle
+
+def curveSpeed():
+    return speed
+
+def straightSpeed():
+    return speed
+
+def driveInLane(image):
+    return
+
 new = gpad.read()
 try:
+    LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
+    angle = 0
+    speed = 0.066
+    manual = False
+    prev_speed = 0
+    prev_angle = 0
     # B button to cancel
     while gpad.B != 1:
-        start = time.time()
         print('-----------------------------------------------------------------')
+        start = time.time()
         frontCam.read()
         counter += 1
         front = frontCam.image_data[croppedImageHeight:480, :]
-        binaryf = detectGrayscale(front)
-
-        maxY5 = 0
-        maxY160 = 0
-        maxY320 = 0
-        maxY480 = 0
-        maxY634 = 0
-        for i in range(0,croppedImageHeight-1):
-            white5 = binaryf[i][5]
-            if white5 == 255:
-                maxY5 = i
-            white160 = binaryf[i][160]
-            if white160 == 255:
-                maxY160 = i
-            white320 = binaryf[i][320]
-            if white320 == 255:
-                maxY320 = i
-            white480 = binaryf[i][480]
-            if white480 == 255:
-                maxY480 = i
-            white634 = binaryf[i][634]
-            if white634 == 255:
-                maxY634 = i
-        #print(maxYl)
-        #print(maxYr)
-        print('Max on Col 5 =', maxY5)
-        print('Max on Col 160 =', maxY160)
-        print('Max on Col 320 =', maxY320)
-        print('Max on Col 480 =', maxY480)
-        print('Max on Col 634 =', maxY634)
-        
-        
+        binaryf = BGR2Binary(front)
         cv2.imshow('Binary Front Image', binaryf)
-
-        # attempt at controls for SLAM
-        angle = 0
-        # check if the left side is significantly lower than the right and vice versa
-        highThresh = 160
-        lowThresh = 150
-        #"""
-        turn = 'r'
-        """
-        if maxY5 >= maxY160 and maxY160 >= maxY320:
-            turn = 'r'
-        elif maxY634 >= maxY480 and maxY480 >= maxY320:
-            turn = 'l'
-        #"""
-        if (maxY5 - maxY160) < 70 and (maxY5 - maxY160) >= 40 and maxY5 >= 120:
-            turn = 'r'
-            print('thing1')
-        elif (maxY634 - maxY480) < 70 and (maxY634 - maxY480) >= 30 and maxY634 >= 120:
-            turn = 'l'
-            print('thing2')
-        print('Turn Direction =', turn)
-        #right turn and straight
-        if turn == 'r':
-            if maxY5 <= 120 or maxY5 >= highThresh:
-                angle = -.2*(abs(maxY5 - highThresh))*.1
-            elif maxY5 < lowThresh:
-                angle = .2*(lowThresh - maxY5)*.1
-        # left turn
-        elif turn == 'l':
-            if maxY634 <= 120 or maxY634 >= highThresh:
-                angle = .2*(maxY634 - highThresh)*.1
-            elif maxY634 < lowThresh:
-                angle = -.2*(lowThresh - maxY634)*.1
-        #"""
-        print('Angle =',angle)
-
-        ## Movement and Gamepadxit
-        # right trigger for speed
-        #speed = 0.066*gpad.RT
-        speed = 0.066
-        #mtr_cmd = np.array([.066, angle]) # need to replace with varius input on encoders and speeds
-        mtr_cmd = np.array([speed, angle])
-        print('Speed =',speed)
-        LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
-
         new = gpad.read()
 
-        current, batteryVoltage, encoderCounts = myCar.read_write_std(mtr_cmd, LEDs)
+        # x = 5, and x = 634 are near the edge of the screen but not exactly on the edge
+        cols = [5, 160, 320, 480, 634]
+        maxY = findLowestWhite(binaryf, cols)
+        turn = findDirection(maxY)
+        angle = setAngle(maxY, turn)
+        speed = setSpeed(angle, prev_angle, prev_speed, counter, turn, manual)
+        print('Counter:', counter)
+        new = gpad.read()
 
+        #speed = 0.066
+        # activate controls
+        mtr_cmd = np.array([speed, angle])
+        current, batteryVoltage, encoderCounts = myCar.read_write_std(mtr_cmd, LEDs)
+        prev_angle = angle
+        prev_speed = speed
+        new = gpad.read()
+
+        # wait statement
         end = time.time()
-        
         computationTime = end - start
         sleepTime = sampleTime - ( computationTime % sampleTime )
         msSleepTime = int(1000*sleepTime)
@@ -196,9 +261,6 @@ try:
 except KeyboardInterrupt:
 	print("User interrupted!")
 finally:
-    leftCam.terminate()
-    backCam.terminate()
-    rightCam.terminate()
     frontCam.terminate()
     gpad.terminate()
     myCar.terminate()

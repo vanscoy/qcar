@@ -10,6 +10,7 @@ import math
 import os
 import sys
 import utils
+import datetime
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Timing Parameters and methods 
@@ -217,6 +218,27 @@ def straightSpeed():
 def driveInLane(image):
     return
 
+def addTerminalToVideo(image, testData, frameNum):
+    text = 'Columns to search on:\t' + str(testData[frameNum][0]) + '\n'
+    text += 'Max Y values:\t\t' + str(testData[frameNum][1]) + '\n'
+    text += 'Turn Direction = ' + str(testData[frameNum][2]) + '\n'
+    text += 'Angle = ' + str(testData[frameNum][3]) + '\n'
+    text += 'Speed = ' + str(testData[frameNum][4]) + '\n'
+    text += 'Counter = ' + str(testData[frameNum][5]) + '\n'
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    fontScale = 5
+    thickness = 1
+    color = (255,255,255)
+    origin = (0, croppedImageHeight + 100)
+    cv2.putText(image, text, origin, font, fontScale, color, thickness, cv2.LINE_AA)
+    return
+
+def videoName(path, filename, filetype):
+    now = datetime.datetime.now()
+    name = path + filename + '_' + str(now) + filetype
+    name = name.replace(' ', '_')
+    return name
+
 # usually around 4-5
 # a few outliers mess this up, especially at start; maybe reject outliers
 # frameTimeList[0] is a huge outlier
@@ -234,14 +256,21 @@ def frameRate(frameTimeList):
 # isColor is a boolean that tells us if the video will be in color
 # maybe add time and date to filename
 # add terminal output to frames
-def saveVideo(frames, filename, fps, isColor):
-    makeVid = cv2.VideoWriter(filename, cv2.VideoWriter_fourcc(*'XVID'), fps, (imageWidth,croppedImageHeight), isColor)
+def saveVideo(frames, filename, fps, isColor, testData):
+    makeVid = cv2.VideoWriter(filename, cv2.VideoWriter_fourcc(*'XVID'), fps, (imageWidth,croppedImageHeight+100), isColor)
     for i in range(0,len(frames)):
+        #addTerminalToVideo(frames[i], testData, i)
         makeVid.write(frames[i])
     makeVid.release()
 
 new = gpad.read()
 frameTimeList = list()
+frameList = list()
+testData = list([])
+isColor = False
+path = './outputVideos/CSI_Front_Camera/'
+filename = 'output'
+filetype = '.avi'
 try:
     LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
     angle = 0
@@ -277,7 +306,7 @@ try:
         prev_angle = angle
         prev_speed = speed
         new = gpad.read()
-
+        
         # wait statement
         endCompute = time.time()
         computationTime = endCompute - startFrame
@@ -287,6 +316,18 @@ try:
             msSleepTime = 1 # this check prevents an indefinite sleep as cv2.waitKey waits indefinitely if input is 0
         cv2.waitKey(msSleepTime)
         endFrame = time.time()
+
+        # Data for testing and output
+        testData.append([cols, maxY, turn, angle, speed, counter])
+
+        '''text = 'Columns to search on:\t' + str(testData[counter][0]) + '\n'
+        text += 'Max Y values:\t\t\t' + str(testData[counter][1]) + '\n'
+        text += 'Turn Direction = ' + str(testData[counter][2]) + '\n'
+        text += 'Angle = ' + str(testData[counter][3]) + '\n'
+        text += 'Speed = ' + str(testData[counter][4]) + '\n'
+        text += 'Counter = ' + str(testData[counter][5]) + '\n'
+        print(text)'''
+        frameList.append(binaryf)
         frameTime = endFrame - startFrame
         frameTimeList.append(frameTime)
 
@@ -296,6 +337,8 @@ finally:
     frontCam.terminate()
     gpad.terminate()
     myCar.terminate()
-    #fps = frameRate(frameTimeList)
-    #saveVideo(frames, filename, fps, isColor)
+    fps = frameRate(frameTimeList)
+    name = videoName(path, filename, filetype)
+    print(name)
+    saveVideo(frameList, name, fps, isColor, testData)
     plt.close() 

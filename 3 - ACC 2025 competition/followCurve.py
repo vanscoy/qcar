@@ -247,6 +247,21 @@ def saveVideo(frames, filename, fps, isColor):
         makeVid.write(frames[i])
     makeVid.release()
 
+# maxSize is the maximum number of frames we want to save
+def saveAsPrevFrame(prevData, maxSize):
+    prevFrames.append(prevData)
+    if len(prevFrames) > maxSize:
+        prevFrames.pop(0) # pop the first frame to save memory
+
+# takes the index of the data that you want to read and how many frames ago you read it from and returns said data
+# prevFrame[frameNum] = [binaryf.copy(), maxY, turn, angle, speed, counter, current, batteryVoltage, encoderCounts, frameTime]
+def readPrevFrame(dataNum, framesAgo):
+    if len(prevFrames) < framesAgo:
+        return
+    size = len(prevFrames)
+    frameNum = size - framesAgo
+    return prevFrames[frameNum][dataNum]
+
 new = gpad.read()
 frameTimeList = list()
 frameList = list()
@@ -254,6 +269,7 @@ isColor = False
 path = './outputVideos/CSI_Front_Camera/'
 filename = 'output'
 filetype = '.avi'
+prevFrames = list()
 try:
     LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
     angle = 0
@@ -300,6 +316,9 @@ try:
         cv2.waitKey(msSleepTime)
         endFrame = time.time()
 
+        # save the previous 10 frames
+        prevData = [binaryf.copy(), maxY, turn, angle, speed, counter, current, batteryVoltage, encoderCounts, frameTime]
+        saveAsPrevFrame(prevData, 10)
         frameList.append(binaryf.copy())
         frameTime = endFrame - startFrame
         frameTimeList.append(frameTime)
@@ -312,6 +331,7 @@ finally:
     myCar.terminate()
     fps = frameRate(frameTimeList)
     name = videoName(path, filename, filetype)
-    print(name)
+    print('FPS = ', fps)
+    print('Filename = ', name)
     saveVideo(frameList, name, fps, isColor)
     plt.close() 

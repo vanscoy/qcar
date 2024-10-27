@@ -115,8 +115,8 @@ def findDirection(maxY):
 # adjusts angle based on how far off it is
 def setAngle(maxY, turn):
     angle = 0
-    highThresh = 160
-    lowThresh = 150
+    highThresh = 170
+    lowThresh = 145
     #right turn and straight
     if turn == 'r':
         if maxY[0] <= 120 or maxY[0] >= highThresh:
@@ -192,8 +192,11 @@ def setSpeed(angle, prev_angle, prev_speed, counter, turn, manual, speed_mod=0.0
     return speed
 
 # Function to determine which section of the track the car is on
-def findSection():
-    return
+def findSection(maxY, cols, curr_section):
+    section = curr_section
+    if maxY[0] >= 145 and maxY[0] <= 170 and maxY[int(len(maxY)-1)] >= 145 and maxY[int(len(maxY)-1)] <= 170:
+        section = 'straight'
+    return section
 
 def leftCurveAngle():
     return angle

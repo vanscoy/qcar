@@ -76,6 +76,8 @@ def detectHSV(image, color):
         points = np.int0(points)
         cv2.drawContours(image, [points], 0, (0, 255, 0), 2)
 
+    cv2.imshow('test', image)
+    cv2.waitKey(1)
     return image
 
 # function to detect objects based on their brightness in a grayscale format
@@ -141,6 +143,8 @@ def detectGrayscale(image):
             points = np.int0(points)
             # draw onto original image
             cv2.drawContours(imageContours, [points], 0, (0, 255, 0), 2)
+
+    #cv2.imshow(imageContours)
 
     return imageContours
 
@@ -247,7 +251,7 @@ try:
         
         # Display the four images
         # HSV
-        cv2.imshow('HSV Objects', hsvObjects)
+        #cv2.imshow('HSV Objects', hsvObjects)
         # Grayscale
         #cv2.imshow('Grayscale Objects', grayscaleObjects)
 

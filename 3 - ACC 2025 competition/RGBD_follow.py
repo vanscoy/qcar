@@ -28,17 +28,18 @@ print('Sample Time: ', sampleTime)
 counter = 0
 imageWidth = 640
 imageHeight = 480
+# imageWidth = 1280
+# imageHeight = 720
 croppedImageHeight = int(imageHeight/2)
 #cameraID = '3'
 angle = 0
-max_distance = 5
 robot_pos = np.array([0.0, 0.0, 0.0])
 
 # -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
 ## Initialize the CSI cameras
-myCam1 = Camera3D(mode='RGB', frame_width_RGB=imageWidth, frame_height_RGB=imageHeight)
-max_distance = 2
-min_distance = 1
+myCam1 = Camera3D(mode='RGB&DEPTH', frame_width_RGB=imageWidth, frame_height_RGB=imageHeight)
+max_distance = 0.8
+min_distance = 0.001
 begin = True
 
 myCar = QCar()
@@ -85,6 +86,7 @@ def detectGrayscale(image):
     return binaryImage
 
 new = gpad.read()
+flag = True
 try:
     # A button to start
     while begin:
@@ -92,7 +94,7 @@ try:
         new = gpad.read()
         if gpad.A == 1:
             begin = False
-            speed = 0.074
+            speed = 0.0  #was 0.074
     # B button to cancel
     #prev_center_xf = int(imageWidth/2)
     #prev_center_yf = int(croppedImageHeight/2)
@@ -100,16 +102,35 @@ try:
         start = time.time()
         print('-----------------------------------------------------------------')
         myCam1.read_RGB()
+        myCam1.read_depth(dataMode='m')
+        
+        # Threshold the depth image based on min and max distance set above, and cast it to uint8 (to be used as a mask later)
+        binary_now = qi.binary_thresholding(myCam1.image_buffer_depth_m, min_distance, max_distance).astype(np.uint8)
+        
+        # Initialize binary_before to keep a 1 step time history of the binary to do a temporal difference filter later. 
+        # At the first time step, flag = True. Initialize binary_before and then set flag = False to not do this again.
+        if flag:
+            binary_before = binary_now
+            flag = False
+        
+        # clean  =  closing filter applied ON ( binary_now BITWISE AND ( BITWISE NOT of ( the ABSOLUTE of ( difference between binary now and before ) ) ) )
+        binary_clean = qi.image_filtering_close(cv2.bitwise_and( cv2.bitwise_not(np.abs(binary_now - binary_before)/255), binary_now/255 ), dilate=3, erode=1, total=1)
+
+        # grab a smaller chunk of the depth data and scale it back to full resolution to account for field-of-view differences and physical distance between the RGB/Depth cameras.
+        binary_clean = cv2.resize(binary_clean[81:618, 108:1132], (640, 480)).astype(np.uint8)
+
+        # Apply the binary_clean mask to the RGB image captured, and then display it.
+        masked_RGB = cv2.bitwise_and(myCam1.image_buffer_RGB, myCam1.image_buffer_RGB, mask=binary_clean)
         counter += 1
 
         front = myCam1.image_buffer_RGB[croppedImageHeight:480, :]
-        binaryf = detectGrayscale(front)
+        binaryf = detectGrayscale(masked_RGB)
 
         max_y_white_l = 0
         max_y_white_r = 0
-        for i in range(0,croppedImageHeight-1):
-            whiteLeft = binaryf[i][5]
-            whiteRight = binaryf[i][634]
+        for i in range(0,imageWidth-1):
+            whiteLeft = binaryf[475][i]   # was 5
+            whiteRight = binaryf[475][639-i]
             if whiteLeft == 255:
                 max_y_white_l = i
                 #print(i)
@@ -118,62 +139,26 @@ try:
         #print('----------------------------------------------------------------')
         print(max_y_white_l)
         print(max_y_white_r)
+
+        for i in range(0,imageHeight-1):
+            binaryf[i][max_y_white_l] = 120
+            binaryf[i][639-max_y_white_r] = 120
         
         cv2.imshow('Binary Front Image', binaryf)
 
         # attempt at controls for SLAM
         angle = 0
         # check if the left side is significantly lower than the right and vice versa
-        highThresh = 150
-        lowThresh = 130
+        highThresh = 490
+        lowThresh = 325
 
-        """yDiff = abs(max_y_white_l - max_y_white_r)
-        print(yDiff)
-        # straight section
-        if yDiff < 20:
-            if max_y_white_r >= max_y_white_l:
-                #turn = 'left'
-                angle = max_y_white_r/400
-            elif max_y_white_r < max_y_white_l:
-                #turn = 'right'
-                angle = -1*max_y_white_l/400
-        # curve
-        else:
-            """
-        # this causes errors because it crosses the yellow line
-        # use right line if no errors from lighting
-        """
-        if max_y_white_r < croppedImageHeight/2:
-            if max_y_white_r >= max_y_white_l:
-                #turn = 'left'
-                angle = .2*(max_y_white_r - highThresh)*.1
-            elif max_y_white_r < max_y_white_l:
-                #turn = 'right'
-                angle = -.2*(lowThresh - max_y_white_r)*.1
-        # use left line if no errors from lighting
-        elif max_y_white_l < croppedImageHeight/2:
-            if max_y_white_r < max_y_white_l:
-                #turn = 'left'
-                angle = .2*(max_y_white_l - highThresh)*.1
-            elif max_y_white_r >= max_y_white_l:
-                #turn = 'right
-                angle = -.2*(lowThresh - max_y_white_l)*.1
-        #"""
-        """
-        if max_y_white_r >= max_y_white_l:
-            #turn = 'left'
-            angle = max_y_white_r/400
-        elif max_y_white_r < max_y_white_l:
-            #turn = 'right'
-            angle = -1*max_y_white_l/400
-        #"""
-        #"""
         turn = 'r'
+
         if turn == 'r':
             if max_y_white_l >= highThresh:
-                angle = -.2*(max_y_white_l - highThresh)*.1
+                angle = -.1*abs(max_y_white_l - highThresh)*.01
             elif max_y_white_l < lowThresh:
-                angle = .2*(lowThresh - max_y_white_l)*.1
+                angle = .1*abs(lowThresh - max_y_white_l)*.01
         elif turn == 'l':
             if max_y_white_r >= highThresh:
                 angle = .2*(max_y_white_r - highThresh)*.1

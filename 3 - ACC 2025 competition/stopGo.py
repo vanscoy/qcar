@@ -106,7 +106,7 @@ def combineFeeds(leftCam, backCam, rightCam, frontCam):
         axis=0)
     return allCams
 
-def stopGo(slowSpeed):
+def stopGo():
     # Josh - If stop sign detected (Uncomment when Stop-Go image detection implemented)
     #if [stopLight] >= [stopValue]:
     #    while (speed.encoder_speed() != 0)  
@@ -186,9 +186,9 @@ try:
 
         if lowest_white_l >= 90:
             # to the right
-            angle = -.035*(lowest_white_l/10)
+            angle = -.025*(lowest_white_l/10)
         elif lowest_white_l < 70:
-            angle = .035*(lowest_white_l/10)
+            angle = .025*(lowest_white_l/10)
 
         ## Movement and Gamepadxit
         # right trigger for speed
@@ -196,21 +196,24 @@ try:
         #mtr_cmd = np.array([.075*gpad.RT, angle])
         #mtr_cmd = np.array([.25*(1-abs(.5*gpad.LLA), .25*gpad.LLA]) - Autonomous Code
 
-        # stopGo(mtrSpeed) # Stop sign functionality
+        # stopGo() # Stop sign functionality
 
-        while (speed.encoder_speed() < .3 and angle < 0):
-            #mtrSpeed = mtrSpeed + .001
-            angle = angle + 1
-        while (speed.encoder_speed() < .3 and angle > 0):
-            #mtrSpeed = mtrSpeed + .001
-            angle = angle - 1
-        while (speed.encoder_speed() > .3 and angle < 0):
-            #mtrSpeed = mtrSpeed - .001
-            angle = angle + 1
-        while (speed.encoder_speed() > .3 and angle > 0):
-            #mtrSpeed = mtrSpeed - .001
-            angle = angle - 1
-        #mtrSpeed = .066
+        if (speed.encoder_speed() < .43 and angle == 0):
+            print("speed")
+            mtrSpeed = mtrSpeed + .002
+
+        if (speed.encoder_speed() > .43 and angle == 0):
+            print("slow")
+            mtrSpeed = mtrSpeed - .002
+
+        if (speed.encoder_speed() < .43 and angle != 0):
+            print("speed angle")
+            mtrSpeed = mtrSpeed + .003
+
+        if (speed.encoder_speed() > .43 and angle != 0):
+            print("slow angle")
+            mtrSpeed = mtrSpeed - .003
+
 
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
 

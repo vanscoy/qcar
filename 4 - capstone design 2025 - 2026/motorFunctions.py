@@ -1,5 +1,5 @@
+from Quanser.product_QCar import QCar
 from typing import Sequence
-from qcar import QCar
 
 # Allowed ranges.
 THROTTLE_MIN = -1.0

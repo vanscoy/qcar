@@ -15,6 +15,14 @@ THROTTLE_MAX = 1.0
 STEERING_MIN = -1.0
 STEERING_MAX = 1.0
 
+# Optional scaling and sensitivity parameters. Defaults preserve current linear behavior.
+# If you find small inputs act like full deflection, increase the exponent (>1)
+# to reduce sensitivity near zero, or reduce the scale (<1) to globally shrink commands.
+THROTTLE_SCALE = 1.0
+STEERING_SCALE = 1.0
+THROTTLE_EXPONENT = 1.0
+STEERING_EXPONENT = 1.0
+
 
 def setThrottle(value: float) -> float:
     """Clamp and return the throttle command within [-1.0, 1.0].
@@ -25,7 +33,10 @@ def setThrottle(value: float) -> float:
         v = float(value)
     except Exception as exc:
         raise TypeError(f"throttle value must be numeric: {exc}")
-    return max(THROTTLE_MIN, min(THROTTLE_MAX, v))
+    # apply exponent for sensitivity and global scaling
+    sign = -1.0 if v < 0 else 1.0
+    mapped = sign * (abs(v) ** THROTTLE_EXPONENT) * THROTTLE_SCALE
+    return max(THROTTLE_MIN, min(THROTTLE_MAX, mapped))
 
 
 def setSteering(value: float) -> float:
@@ -37,7 +48,9 @@ def setSteering(value: float) -> float:
         v = float(value)
     except Exception as exc:
         raise TypeError(f"steering value must be numeric: {exc}")
-    return max(STEERING_MIN, min(STEERING_MAX, v))
+    sign = -1.0 if v < 0 else 1.0
+    mapped = sign * (abs(v) ** STEERING_EXPONENT) * STEERING_SCALE
+    return max(STEERING_MIN, min(STEERING_MAX, mapped))
 
 
 def getThrottle(mtr_cmd: Sequence[float]) -> float:
@@ -145,6 +158,31 @@ def _interactive_loop():
                     print(f"Current: {current}, Battery V: {batteryVoltage}, Battery %: {battery_pct:.2f}%, Encoders: {encoderCounts}")
                 except Exception as exc:
                     print(f"Error communicating with QCar: {exc}")
+            elif cmd == 'm':
+                # adjust multipliers
+                try:
+                    ts = float(input(f"Throttle scale (current {THROTTLE_SCALE}): "))
+                    ss = float(input(f"Steering scale (current {STEERING_SCALE}): "))
+                except ValueError:
+                    print("Invalid numeric input")
+                    continue
+                globals()['THROTTLE_SCALE'] = ts
+                globals()['STEERING_SCALE'] = ss
+                print(f"Updated scales: throttle={THROTTLE_SCALE}, steering={STEERING_SCALE}")
+            elif cmd == 'e':
+                # adjust exponents
+                try:
+                    te = float(input(f"Throttle exponent (current {THROTTLE_EXPONENT}): "))
+                    se = float(input(f"Steering exponent (current {STEERING_EXPONENT}): "))
+                except ValueError:
+                    print("Invalid numeric input")
+                    continue
+                if te <= 0 or se <= 0:
+                    print("Exponent must be positive")
+                    continue
+                globals()['THROTTLE_EXPONENT'] = te
+                globals()['STEERING_EXPONENT'] = se
+                print(f"Updated exponents: throttle={THROTTLE_EXPONENT}, steering={STEERING_EXPONENT}")
             else:
                 print("Unknown command")
 

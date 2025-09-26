@@ -1,0 +1,14 @@
+from Quanser.q_essential import LIDAR
+import time
+
+lidar = LIDAR(num_measurements=7200)
+lidar.set_motor_speed(5.0)  # Adjust speed if needed
+
+try:
+    for _ in range(30):
+        lidar.read()
+        print("Distances:", lidar.distances[:10])
+        time.sleep(0.1)
+
+finally:
+    lidar.terminate()

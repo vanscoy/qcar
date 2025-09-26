@@ -48,7 +48,11 @@ try:
             distances = distances[valid]
 
             sc.set_offsets(np.c_[angles, distances])
-            ax.set_rmax(np.max(distances) + 0.5)
+            if distances.size > 0:
+    ax.set_rmax(np.max(distances) + 0.5)
+else:
+    ax.set_rmax(1.0)  # Default zoom when no valid data
+
             fig.canvas.draw()
             fig.canvas.flush_events()
 

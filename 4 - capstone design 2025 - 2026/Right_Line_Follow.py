@@ -11,7 +11,7 @@ rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate
 
 # Parameters
 target_offset = 50  # Desired pixel offset from right edge
-speed = 0.2         # Forward speed
+speed = 0.05        # Slower forward speed
 
 def get_right_line_offset(image):
     # Crop right side of image
@@ -35,6 +35,10 @@ try:
     while True:
         rightCam.read()
         img = rightCam.image_data
+        # Check for valid image data
+        if img is None or img.shape[0] == 0 or img.shape[1] == 0:
+            print("Warning: Camera returned invalid image data.")
+            continue
         offset = get_right_line_offset(img)
 
         # Visualize the right crop and detected line
@@ -48,8 +52,13 @@ try:
         else:
             steering = 0  # No line detected, go straight or stop
 
+
         cv2.imshow('Right Camera View', display_img)
-        cv2.waitKey(1)
+        key = cv2.waitKey(1)
+        # Kill switch: ESC key (27) to exit
+        if key == 27:
+            print("Kill switch activated: ESC pressed.")
+            break
 
         # Use read_write_std for car control (speed, steering, LEDs)
         mtr_cmd = np.array([speed, steering])
@@ -60,3 +69,4 @@ finally:
     cv2.destroyAllWindows()
     myCar.terminate()
     rightCam.terminate()
+

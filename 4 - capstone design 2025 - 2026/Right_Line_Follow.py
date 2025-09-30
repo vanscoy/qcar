@@ -34,16 +34,26 @@ try:
     while True:
         img = camera.read()
         offset = get_right_line_offset(img)
+
+        # Visualize the right crop and detected line
+        h, w, _ = img.shape
+        right_crop = img[:, int(w*0.7):w]
+        display_img = right_crop.copy()
         if offset is not None:
             error = target_offset - offset
             steering = np.clip(error * 0.01, -1, 1)  # Simple proportional control
+            cv2.circle(display_img, (offset, h//2), 10, (0,255,0), -1)
         else:
             steering = 0  # No line detected, go straight or stop
+
+        cv2.imshow('Right Camera View', display_img)
+        cv2.waitKey(1)
 
         car.set_speed(speed)
         car.set_steering(steering)
         time.sleep(0.05)
 finally:
+    cv2.destroyAllWindows()
     car.set_speed(0)
     car.set_steering(0)
     car.terminate()

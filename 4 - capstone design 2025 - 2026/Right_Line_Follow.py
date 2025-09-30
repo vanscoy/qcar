@@ -1,12 +1,13 @@
 from Quanser.product_QCar import QCar
-from Quanser.q_essential import Camera3D
+from Quanser.q_essential import Camera2D
 import cv2
 import numpy as np
 import time
 
-# Initialize QCar and right-side Camera
-car = QCar()
-camera = Camera3D(0)  # Right-side camera
+
+# Initialize QCar and right-side Camera2D
+myCar = QCar()
+rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate=30.0)
 
 # Parameters
 target_offset = 50  # Desired pixel offset from right edge
@@ -32,7 +33,8 @@ def get_right_line_offset(image):
 
 try:
     while True:
-        img = camera.read()
+        rightCam.read()
+        img = rightCam.image_data
         offset = get_right_line_offset(img)
 
         # Visualize the right crop and detected line
@@ -49,12 +51,12 @@ try:
         cv2.imshow('Right Camera View', display_img)
         cv2.waitKey(1)
 
-        car.set_speed(speed)
-        car.set_steering(steering)
+        # Use read_write_std for car control (speed, steering, LEDs)
+        mtr_cmd = np.array([speed, steering])
+        LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
+        myCar.read_write_std(mtr_cmd, LEDs)
         time.sleep(0.05)
 finally:
     cv2.destroyAllWindows()
-    car.set_speed(0)
-    car.set_steering(0)
-    car.terminate()
-    camera.terminate()
+    myCar.terminate()
+    rightCam.terminate()

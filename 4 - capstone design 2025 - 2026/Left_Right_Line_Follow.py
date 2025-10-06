@@ -70,21 +70,31 @@ try:
         display_img_right = img_right.copy()
         display_img_left = img_left.copy()
 
-        steering = 0
-        overlays_drawn = False
+        # Draw overlays
         if overlay_right is not None:
-            error_right = target_offset - overlay_right['offset']
-            steering += np.clip(error_right * 0.005, -1, 1)
             cv2.drawContours(display_img_right, [overlay_right['contour']], -1, (255,0,0), 2)
             cv2.circle(display_img_right, overlay_right['centroid'], 10, (0,0,255), -1)
-            overlays_drawn = True
         if overlay_left is not None:
-            error_left = overlay_left['offset'] - target_offset
-            steering -= np.clip(error_left * 0.005, -1, 1)
             cv2.drawContours(display_img_left, [overlay_left['contour']], -1, (0,255,0), 2)
             cv2.circle(display_img_left, overlay_left['centroid'], 10, (0,255,255), -1)
-            overlays_drawn = True
-        if not overlays_drawn:
+
+        # Steering logic: center between two lines if both detected
+        steering = 0
+        if overlay_right is not None and overlay_left is not None:
+            # Both lines detected: find center between them
+            center_pos = (overlay_right['centroid'][0] + overlay_left['centroid'][0]) // 2
+            desired_center = w // 2
+            error = desired_center - center_pos
+            steering = np.clip(error * 0.005, -1, 1)
+        elif overlay_right is not None:
+            # Only right line detected: follow right line
+            error = target_offset - overlay_right['offset']
+            steering = np.clip(error * 0.005, -1, 1)
+        elif overlay_left is not None:
+            # Only left line detected: follow left line
+            error = overlay_left['offset'] - target_offset
+            steering = -np.clip(error * 0.005, -1, 1)
+        else:
             steering = 0
 
         cv2.imshow('Right Camera View', display_img_right)

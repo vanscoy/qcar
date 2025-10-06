@@ -17,7 +17,7 @@ rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate
 # Desired pixel offset from right edge for line following
 target_offset = 50
 # Forward speed of the robot (lower value for slower movement)
-speed = 0.07
+speed = 0.075
 
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
@@ -28,18 +28,22 @@ def get_right_line_offset(image):
     gray = cv2.cvtColor(right_crop, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
+    overlay_info = None
     if contours:  # If any contours are found
         largest = max(contours, key=cv2.contourArea)  # Select the largest contour (assumed to be the line)
         M = cv2.moments(largest)  # Calculate moments for the largest contour
         if M['m00'] > 0:  # Prevent division by zero
             cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour (in right_crop)
             cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour (in right_crop)
-            # Draw the contour in blue on the full image (adjust coordinates)
+            # Prepare overlay info for full image
             contour_full = largest + np.array([int(w*0.7), h//2])
-            cv2.drawContours(image, [contour_full], -1, (255,0,0), 2)
-            # Draw a red dot at the centroid (adjust coordinates to full image)
-            cv2.circle(image, (int(w*0.7)+cx, h//2+cy), 10, (0,0,255), -1)
-            return cx  # Return x-position of detected line (in right_crop)
+            centroid_full = (int(w*0.7)+cx, h//2+cy)
+            overlay_info = {
+                'contour': contour_full,
+                'centroid': centroid_full,
+                'offset': cx
+            }
+            return overlay_info  # Return overlay info
     return None  # Return None if no line is found
 
 try:
@@ -51,20 +55,21 @@ try:
             print("Warning: Camera returned invalid image data.")  # Warn if image is invalid
             continue  # Skip to next loop iteration
 
-        offset = get_right_line_offset(img)  # Find line offset in the image
+        overlay_info = get_right_line_offset(img)  # Get overlay info from cropped lower half
 
         h, w, _ = img.shape  # Get image dimensions
-        right_crop = img[:, int(w*0.7):w]  # Crop right 30% for visualization
-        display_img = right_crop.copy()  # Copy cropped image for display
+        display_img = img.copy()  # Show full camera view
 
-        if offset is not None:  # If line is detected
-            error = target_offset - offset  # Calculate error from desired offset
-            steering = np.clip(error * 0.01, -1, 1)  # Proportional control for steering, clipped to [-1, 1]
-            cv2.circle(display_img, (offset, h//2), 10, (0,255,0), -1)  # Draw green circle at detected line
+        if overlay_info is not None:
+            error = target_offset - overlay_info['offset']  # Calculate error from desired offset
+            steering = np.clip(error * 0.005, -1, 1)  # Reduced gain for smoother turns
+            # Draw overlays on full image
+            cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
+            cv2.circle(display_img, overlay_info['centroid'], 10, (0,0,255), -1)
         else:
             steering = 0  # No line detected, go straight
 
-        cv2.imshow('Right Camera View', display_img)  # Show cropped camera view with detection
+        cv2.imshow('Right Camera View', display_img)  # Show full camera view with overlays
         key = cv2.waitKey(1)  # Wait for key press (1 ms)
         # Kill switch: ESC key (27) to exit
         if key == 27:
@@ -80,7 +85,5 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
-
-
-
+    
 

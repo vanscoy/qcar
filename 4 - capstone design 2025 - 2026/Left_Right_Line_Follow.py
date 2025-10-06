@@ -67,26 +67,28 @@ try:
         overlay_left = get_line_offset(img_left, side='left')
 
         h, w, _ = img_right.shape
-        display_img = img_right.copy()
+        display_img_right = img_right.copy()
+        display_img_left = img_left.copy()
 
         steering = 0
         overlays_drawn = False
         if overlay_right is not None:
             error_right = target_offset - overlay_right['offset']
             steering += np.clip(error_right * 0.005, -1, 1)
-            cv2.drawContours(display_img, [overlay_right['contour']], -1, (255,0,0), 2)
-            cv2.circle(display_img, overlay_right['centroid'], 10, (0,0,255), -1)
+            cv2.drawContours(display_img_right, [overlay_right['contour']], -1, (255,0,0), 2)
+            cv2.circle(display_img_right, overlay_right['centroid'], 10, (0,0,255), -1)
             overlays_drawn = True
         if overlay_left is not None:
             error_left = overlay_left['offset'] - target_offset
             steering -= np.clip(error_left * 0.005, -1, 1)
-            cv2.drawContours(display_img, [overlay_left['contour']], -1, (0,255,0), 2)
-            cv2.circle(display_img, overlay_left['centroid'], 10, (0,255,255), -1)
+            cv2.drawContours(display_img_left, [overlay_left['contour']], -1, (0,255,0), 2)
+            cv2.circle(display_img_left, overlay_left['centroid'], 10, (0,255,255), -1)
             overlays_drawn = True
         if not overlays_drawn:
             steering = 0
 
-        cv2.imshow('Camera View', display_img)
+        cv2.imshow('Right Camera View', display_img_right)
+        cv2.imshow('Left Camera View', display_img_left)
         key = cv2.waitKey(1)
         if key == 27:
             print("Kill switch activated: ESC pressed.")
@@ -101,4 +103,3 @@ finally:
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate right camera connection
     leftCam.terminate()  # Terminate left camera connection
-    

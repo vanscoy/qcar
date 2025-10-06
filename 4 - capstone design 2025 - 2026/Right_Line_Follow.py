@@ -17,7 +17,7 @@ rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate
 # Desired pixel offset from right edge for line following
 target_offset = 50
 # Forward speed of the robot (lower value for slower movement)
-speed = 0.2
+speed = 0.07
 
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
@@ -80,6 +80,7 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+
 
 
 

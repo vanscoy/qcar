@@ -26,12 +26,12 @@ motor = np.array([0, 0])
 
 def setThrottle(value: float):
     motor[0] = value/4
-    mtr_cmd = motor
+    myCar.read_write_std(motor, [0, 0, 0, 0, 0, 0, 0, 0])
     
 # Accepts Steering Range of ±28 degrees
 def setSteering(value: float):
     motor[1] = value/28/4
-    mtr_cmd = motor
+    myCar.read_write_std(motor, [0, 0, 0, 0, 0, 0, 0, 0])
 
 
 def getThrottle() -> float:

@@ -17,7 +17,6 @@ import os
 import struct
 import matplotlib.pyplot as plt
 import cv2
-import utils
 
 from typing import Sequence
 
@@ -26,12 +25,12 @@ myCar = QCar()
 motor = np.array([0, 0])
 
 def setThrottle(value: float):
-    motor[0] = value
+    motor[0] = value/4
     mtr_cmd = motor
     
 # Accepts Steering Range of ±28 degrees
 def setSteering(value: float):
-    motor[1] = value/28
+    motor[1] = value/28/4
     mtr_cmd = motor
 
 

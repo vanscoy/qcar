@@ -31,6 +31,11 @@ def get_right_line_offset(image):
         M = cv2.moments(largest)  # Calculate moments for the largest contour
         if M['m00'] > 0:  # Prevent division by zero
             cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour
+            cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour
+            # Draw the contour in blue
+            cv2.drawContours(image[:, int(image.shape[1]*0.7):image.shape[1]], [largest], -1, (255,0,0), 2)
+            # Draw a red dot at the centroid (the point used for offset)
+            cv2.circle(image[:, int(image.shape[1]*0.7):image.shape[1]], (cx, cy), 10, (0,0,255), -1)
             return cx  # Return x-position of detected line
     return None  # Return None if no line is found
 
@@ -72,4 +77,5 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+
 

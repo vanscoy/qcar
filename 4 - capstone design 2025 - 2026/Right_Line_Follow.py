@@ -1,72 +1,74 @@
+# Import QCar class for robot control
 from Quanser.product_QCar import QCar
+# Import Camera2D class for image capture
 from Quanser.q_essential import Camera2D
+# Import OpenCV for image processing
 import cv2
+# Import NumPy for numerical operations
 import numpy as np
+# Import time for delays and timing
 import time
 
-
-# Initialize QCar and right-side Camera2D
+# Create QCar object for robot control
 myCar = QCar()
+# Create right camera object
 rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate=30.0)
 
-# Parameters
-target_offset = 50  # Desired pixel offset from right edge
-speed = 0.05        # Slower forward speed
+# Desired pixel offset from right edge for line following
+target_offset = 50
+# Forward speed of the robot (lower value for slower movement)
+speed = 0.05
 
+# Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
-    # Crop right side of image
-    h, w, _ = image.shape
-    right_crop = image[:, int(w*0.7):w]  # Crop right 30%
-    # Convert to grayscale and threshold
-    gray = cv2.cvtColor(right_crop, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-    # Find contours
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if contours:
-        # Find largest contour (assume it's the line)
-        largest = max(contours, key=cv2.contourArea)
-        M = cv2.moments(largest)
-        if M['m00'] > 0:
-            cx = int(M['m10'] / M['m00'])
-            return cx
-    return None
+    h, w, _ = image.shape  # Get image dimensions
+    right_crop = image[:, int(w*0.7):w]  # Crop right 30% of the image
+    gray = cv2.cvtColor(right_crop, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
+    if contours:  # If any contours are found
+        largest = max(contours, key=cv2.contourArea)  # Select the largest contour (assumed to be the line)
+        M = cv2.moments(largest)  # Calculate moments for the largest contour
+        if M['m00'] > 0:  # Prevent division by zero
+            cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour
+            return cx  # Return x-position of detected line
+    return None  # Return None if no line is found
 
 try:
-    while True:
-        rightCam.read()
-        img = rightCam.image_data
+    while True:  # Main control loop
+        rightCam.read()  # Capture image from right camera
+        img = rightCam.image_data  # Get image data from camera object
         # Check for valid image data
         if img is None or img.shape[0] == 0 or img.shape[1] == 0:
-            print("Warning: Camera returned invalid image data.")
-            continue
-        offset = get_right_line_offset(img)
+            print("Warning: Camera returned invalid image data.")  # Warn if image is invalid
+            continue  # Skip to next loop iteration
 
-        # Visualize the right crop and detected line
-        h, w, _ = img.shape
-        right_crop = img[:, int(w*0.7):w]
-        display_img = right_crop.copy()
-        if offset is not None:
-            error = target_offset - offset
-            steering = np.clip(error * 0.01, -1, 1)  # Simple proportional control
-            cv2.circle(display_img, (offset, h//2), 10, (0,255,0), -1)
+        offset = get_right_line_offset(img)  # Find line offset in the image
+
+        h, w, _ = img.shape  # Get image dimensions
+        right_crop = img[:, int(w*0.7):w]  # Crop right 30% for visualization
+        display_img = right_crop.copy()  # Copy cropped image for display
+
+        if offset is not None:  # If line is detected
+            error = target_offset - offset  # Calculate error from desired offset
+            steering = np.clip(error * 0.01, -1, 1)  # Proportional control for steering, clipped to [-1, 1]
+            cv2.circle(display_img, (offset, h//2), 10, (0,255,0), -1)  # Draw green circle at detected line
         else:
-            steering = 0  # No line detected, go straight or stop
+            steering = 0  # No line detected, go straight
 
-
-        cv2.imshow('Right Camera View', display_img)
-        key = cv2.waitKey(1)
+        cv2.imshow('Right Camera View', display_img)  # Show cropped camera view with detection
+        key = cv2.waitKey(1)  # Wait for key press (1 ms)
         # Kill switch: ESC key (27) to exit
         if key == 27:
-            print("Kill switch activated: ESC pressed.")
-            break
+            print("Kill switch activated: ESC pressed.")  # Print message if ESC is pressed
+            break  # Exit control loop
 
-        # Use read_write_std for car control (speed, steering, LEDs)
-        mtr_cmd = np.array([speed, steering])
-        LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
-        myCar.read_write_std(mtr_cmd, LEDs)
-        time.sleep(0.05)
+        mtr_cmd = np.array([speed, steering])  # Create motor command array: [speed, steering]
+        LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # Set LED pattern (example)
+        myCar.read_write_std(mtr_cmd, LEDs)  # Send speed/steering/LED command to QCar
+
+        time.sleep(0.05)  # Small delay for control loop timing
 finally:
-    cv2.destroyAllWindows()
-    myCar.terminate()
-    rightCam.terminate()
-
+    cv2.destroyAllWindows()  # Close all OpenCV windows
+    myCar.terminate()  # Terminate QCar connection
+    rightCam.terminate()  # Terminate camera connection

@@ -17,12 +17,14 @@ rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate
 # Desired pixel offset from right edge for line following
 target_offset = 50
 # Forward speed of the robot (lower value for slower movement)
-speed = 0.07
+speed = 0.2
 
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    right_crop = image[:, int(w*0.7):w]  # Crop right 30% of the image
+    # Crop lower half and right 30% of the image for line detection
+    lower_half = image[h//2:h, :]  # Only lower half
+    right_crop = lower_half[:, int(w*0.7):w]  # Crop right 30% of lower half
     gray = cv2.cvtColor(right_crop, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
@@ -30,13 +32,14 @@ def get_right_line_offset(image):
         largest = max(contours, key=cv2.contourArea)  # Select the largest contour (assumed to be the line)
         M = cv2.moments(largest)  # Calculate moments for the largest contour
         if M['m00'] > 0:  # Prevent division by zero
-            cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour
-            cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour
-            # Draw the contour in blue
-            cv2.drawContours(image[:, int(image.shape[1]*0.7):image.shape[1]], [largest], -1, (255,0,0), 2)
-            # Draw a red dot at the centroid (the point used for offset)
-            cv2.circle(image[:, int(image.shape[1]*0.7):image.shape[1]], (cx, cy), 10, (0,0,255), -1)
-            return cx  # Return x-position of detected line
+            cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour (in right_crop)
+            cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour (in right_crop)
+            # Draw the contour in blue on the full image (adjust coordinates)
+            contour_full = largest + np.array([int(w*0.7), h//2])
+            cv2.drawContours(image, [contour_full], -1, (255,0,0), 2)
+            # Draw a red dot at the centroid (adjust coordinates to full image)
+            cv2.circle(image, (int(w*0.7)+cx, h//2+cy), 10, (0,0,255), -1)
+            return cx  # Return x-position of detected line (in right_crop)
     return None  # Return None if no line is found
 
 try:

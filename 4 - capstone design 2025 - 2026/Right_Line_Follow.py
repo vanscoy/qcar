@@ -13,13 +13,16 @@ import time
 myCar = QCar()
 # Create right camera object
 rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate=30.0)
-# Create left camera object
-leftCam = Camera2D(camera_id="2", frame_width=640, frame_height=480, frame_rate=30.0)
 
 # Desired pixel offset from right edge for line following
 target_offset = 50
 # Forward speed of the robot (lower value for slower movement)
-speed = 0.07
+speed = 0.075
+
+# Frame counter and FPS calculation
+frame_count = 0
+fps = 0
+last_time = time.time()
 
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
@@ -50,30 +53,55 @@ def get_right_line_offset(image):
 
 try:
     while True:  # Main control loop
+        start_calc = time.time()  # Start timing calculation
         rightCam.read()  # Capture image from right camera
-        leftCam.read() #Read left picture
-        img_right = rightCam.image_data  # Get image data from camera object
+        img = rightCam.image_data  # Get image data from camera object
         # Check for valid image data
-        if img_right is None or img_right.shape[0] == 0 or img_right.shape[1] == 0:
+        if img is None or img.shape[0] == 0 or img.shape[1] == 0:
             print("Warning: Camera returned invalid image data.")  # Warn if image is invalid
             continue  # Skip to next loop iteration
 
-        overlay_info = get_right_line_offset(img_right)  # Get overlay info from cropped lower half
+        overlay_info = get_right_line_offset(img)  # Get overlay info from cropped lower half
 
-        h, w, _ = img_right.shape  # Get image dimensions
-        display_img_right = img_right.copy()  # Show full camera view
+        h, w, _ = img.shape  # Get image dimensions
+        display_img = img.copy()  # Show full camera view
 
+        # Update frame counter and FPS
+        frame_count += 1
+        current_time = time.time()
+        if current_time - last_time >= 1.0:
+            fps = frame_count
+            frame_count = 0
+            last_time = current_time
+
+        # Draw overlays and frame info
         if overlay_info is not None:
             error = target_offset - overlay_info['offset']  # Calculate error from desired offset
             steering = np.clip(error * 0.005, -1, 1)  # Reduced gain for smoother turns
             # Draw overlays on full image
-            cv2.drawContours(display_img_right, [overlay_info['contour']], -1, (255,0,0), 2)
-            cv2.circle(display_img_right, overlay_info['centroid'], 10, (0,0,255), -1)
+            cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
+            cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
+            # Draw target position as red dot
+            h, w, _ = display_img.shape
+            target_x = int(w * 0.7) + target_offset
+            target_y = h // 2 + (h // 4)  # Middle of cropped lower half
+            cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
         else:
             steering = 0  # No line detected, go straight
 
-        cv2.imshow('Right Camera View', display_img_right)  # Show full camera view with overlays
-        cv2.imshow('Left Camera View', leftCam.image_data)
+        # Calculate computation time
+        calc_time_ms = (time.time() - start_calc) * 1000
+
+        # Put frame count, FPS, and computation time on image
+        cv2.putText(display_img, f'Frames: {frame_count}  FPS: {fps}', (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
+        cv2.putText(display_img, f'Calc Time: {calc_time_ms:.1f} ms', (10, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,255), 2)
+
+        # Resize window for larger display
+        cv2.namedWindow('Right Camera View', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Right Camera View', 1280, 960)
+        cv2.imshow('Right Camera View', display_img)  # Show full camera view with overlays
         key = cv2.waitKey(1)  # Wait for key press (1 ms)
         # Kill switch: ESC key (27) to exit
         if key == 27:
@@ -89,4 +117,5 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
-    leftCam.terminate()
+    
+

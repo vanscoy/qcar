@@ -18,6 +18,8 @@ rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate
 target_offset = 50
 # Forward speed of the robot (lower value for slower movement)
 speed = 0.075
+steering_gain = 0.005  # Gain used for steering calculation
+max_steering_angle = 45  # Maximum steering angle in degrees
 
 # Frame counter and FPS calculation
 frame_count = 0
@@ -77,7 +79,7 @@ try:
         # Draw overlays and frame info
         if overlay_info is not None:
             error = target_offset - overlay_info['offset']  # Calculate error from desired offset
-            steering = np.clip(error * 0.005, -1, 1)  # Reduced gain for smoother turns
+            steering = np.clip(error * steering_gain, -1, 1)  # Reduced gain for smoother turns
             # Draw overlays on full image
             cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
             cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
@@ -97,6 +99,11 @@ try:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
         cv2.putText(display_img, f'Calc Time: {calc_time_ms:.1f} ms', (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,255), 2)
+        cv2.putText(display_img, f'Steering: {steering:.3f}  Gain: {steering_gain}', (10, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,0), 2)
+        angle = steering * max_steering_angle
+        cv2.putText(display_img, f'Angle: {angle:.1f} deg', (10, 120),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,128,255), 2)
 
         # Resize window for larger display
         cv2.namedWindow('Right Camera View', cv2.WINDOW_NORMAL)
@@ -118,4 +125,5 @@ finally:
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
     
+
 

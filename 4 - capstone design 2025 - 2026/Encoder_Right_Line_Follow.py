@@ -217,38 +217,42 @@ def run_wheel_mapping_probe(car, phases=None, phase_time=0.6, speed=0.06):
             # run phase
             cmd = np.array([speed, steer])
             start = time.time()
+            # While driving, capture the last non-empty read_write_std return (enc values are often present
+            # only when the motor command is non-zero). We'll store the last_ret to extract encoder counts.
+            last_ret = None
             while time.time() - start < phase_time:
                 try:
-                    car.read_write_std(cmd, LEDs)
+                    ret = car.read_write_std(cmd, LEDs)
+                    last_ret = ret
                 except Exception:
                     pass
                 time.sleep(0.05)
 
-            # sample final encoder values
+            # derive final encoder values from the last non-empty ret while moving; fall back to read_encoder()
             enc1_left = None
             enc1_right = None
             try:
-                ret1 = car.read_write_std(np.array([0.0, 0.0]), LEDs)
-                if isinstance(ret1, (list, tuple)) and len(ret1) >= 3:
-                    enc_array1 = ret1[2]
+                if last_ret is not None and isinstance(last_ret, (list, tuple)) and len(last_ret) >= 3:
+                    enc_array1 = last_ret[2]
                     if isinstance(enc_array1, (list, tuple, np.ndarray)) and len(enc_array1) >= 2:
                         enc1_left = int(enc_array1[0]); enc1_right = int(enc_array1[1])
                     elif isinstance(enc_array1, (int, float)):
                         enc1_left = int(enc_array1); enc1_right = None
             except Exception:
                 pass
-            try:
-                r1 = getattr(car, 'read_encoder', None)
-                if callable(r1):
-                    v = r1()
-                    if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
-                        enc1_left = int(v[0]); enc1_right = int(v[1])
-                    elif isinstance(v, (list, tuple, np.ndarray)) and len(v) == 1:
-                        enc1_left = int(v[0])
-                    elif isinstance(v, int):
-                        enc1_left = int(v)
-            except Exception:
-                pass
+            if enc1_left is None and enc1_right is None:
+                try:
+                    r1 = getattr(car, 'read_encoder', None)
+                    if callable(r1):
+                        v = r1()
+                        if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
+                            enc1_left = int(v[0]); enc1_right = int(v[1])
+                        elif isinstance(v, (list, tuple, np.ndarray)) and len(v) == 1:
+                            enc1_left = int(v[0])
+                        elif isinstance(v, int):
+                            enc1_left = int(v)
+                except Exception:
+                    pass
 
             # compute deltas
             delta_left = None
@@ -330,13 +334,27 @@ def run_per_motor_probe(car, speed=0.06, duration=0.6, sample_dt=0.05):
         before_a = sample_enc()
         cmdA = np.array([speed, 0.0])
         start = time.time()
+        last_ret = None
         while time.time() - start < duration:
             try:
-                car.read_write_std(cmdA, LEDs)
+                ret = car.read_write_std(cmdA, LEDs)
+                last_ret = ret
             except Exception:
                 pass
             time.sleep(sample_dt)
-        after_a = sample_enc()
+        # Prefer encoder values from the last non-empty ret captured during motion
+        after_a = None
+        try:
+            if last_ret is not None and isinstance(last_ret, (list, tuple)) and len(last_ret) >= 3:
+                a = last_ret[2]
+                if isinstance(a, (list, tuple, np.ndarray)) and len(a) >= 2:
+                    after_a = (int(a[0]), int(a[1]))
+                elif isinstance(a, (int, float)):
+                    after_a = (int(a), None)
+        except Exception:
+            after_a = None
+        if after_a is None:
+            after_a = sample_enc()
         with open('encoder_diag.txt', 'a') as f:
             f.write(f'MotorA cmd {cmdA.tolist()} enc_before={before_a} enc_after={after_a} delta={(None if before_a[0] is None or after_a[0] is None else after_a[0]-before_a[0], None if before_a[1] is None or after_a[1] is None else after_a[1]-before_a[1])}\n')
 
@@ -351,13 +369,26 @@ def run_per_motor_probe(car, speed=0.06, duration=0.6, sample_dt=0.05):
         before_b = sample_enc()
         cmdB = np.array([0.0, speed])
         start = time.time()
+        last_ret = None
         while time.time() - start < duration:
             try:
-                car.read_write_std(cmdB, LEDs)
+                ret = car.read_write_std(cmdB, LEDs)
+                last_ret = ret
             except Exception:
                 pass
             time.sleep(sample_dt)
-        after_b = sample_enc()
+        after_b = None
+        try:
+            if last_ret is not None and isinstance(last_ret, (list, tuple)) and len(last_ret) >= 3:
+                a = last_ret[2]
+                if isinstance(a, (list, tuple, np.ndarray)) and len(a) >= 2:
+                    after_b = (int(a[0]), int(a[1]))
+                elif isinstance(a, (int, float)):
+                    after_b = (int(a), None)
+        except Exception:
+            after_b = None
+        if after_b is None:
+            after_b = sample_enc()
         with open('encoder_diag.txt', 'a') as f:
             f.write(f'MotorB cmd {cmdB.tolist()} enc_before={before_b} enc_after={after_b} delta={(None if before_b[0] is None or after_b[0] is None else after_b[0]-before_b[0], None if before_b[1] is None or after_b[1] is None else after_b[1]-before_b[1])}\n')
 
@@ -726,10 +757,15 @@ try:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,128,255), 2)
 
         # Encoder display
+        # If enc is single-channel (enc = (val, None)) treat as motor encoder scalar
         left_cnt = enc[0] if enc and enc[0] is not None else 0
-        right_cnt = enc[1] if enc and enc[1] is not None else 0
-        cv2.putText(display_img, f'Enc L: {left_cnt}  R: {right_cnt}', (10, 150),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
+        right_cnt = enc[1] if enc and enc[1] is not None else None
+        if right_cnt is None:
+            cv2.putText(display_img, f'MotorEnc: {left_cnt}', (10, 150),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
+        else:
+            cv2.putText(display_img, f'Enc L: {left_cnt}  R: {right_cnt}', (10, 150),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
         # Prefer hardware-provided velocity if available
         if hw_vel is not None:
             counts_per_s_l, counts_per_s_r = hw_vel
@@ -740,10 +776,14 @@ try:
         counts_per_s_l = float(counts_per_s_l) if counts_per_s_l is not None else 0.0
         counts_per_s_r = float(counts_per_s_r) if counts_per_s_r is not None else 0.0
 
-        # Show 'N/A' for right channel if absent
-        r_display = f'{counts_per_s_r:.1f}' if enc and enc[1] is not None else 'N/A'
-        cv2.putText(display_img, f'Counts/s L: {counts_per_s_l:.1f}  R: {r_display}', (10, 170),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
+        # Show 'N/A' for right channel if absent; if only a motor scalar exists, label accordingly
+        if enc and enc[1] is None:
+            cv2.putText(display_img, f'Counts/s Motor: {counts_per_s_l:.1f}', (10, 170),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
+        else:
+            r_display = f'{counts_per_s_r:.1f}' if enc and enc[1] is not None else 'N/A'
+            cv2.putText(display_img, f'Counts/s L: {counts_per_s_l:.1f}  R: {r_display}', (10, 170),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
         # Conversions: counts/s -> RPM, rad/s, m/s
         rpm_l = (counts_per_s_l / ENC_COUNTS_PER_REV) * 60.0
@@ -783,6 +823,4 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
-
-
 

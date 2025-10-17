@@ -14,7 +14,7 @@ DIAGNOSTICS_ON = True
 # If no discrete encoder counts are exposed by the model/driver, fall back to using
 # the first element returned by read_write_std() as a motor velocity (revolutions/sec).
 # Set to False to disable this heuristic.
-FALLBACK_RET0_AS_RPS = True
+FALLBACK_RET0_AS_RPS = False
 
 def run_diagnostics_once(car):
     """Print and save a compact diagnostic snapshot of the car object and read() output.
@@ -170,6 +170,107 @@ def run_active_encoder_probe(car, duration=2.0, speed=0.05, sample_dt=0.1):
     except Exception as e:
         print('Active encoder probe failed:', e)
 
+
+def run_wheel_mapping_probe(car, phases=None, phase_time=0.6, speed=0.06):
+    """Automated wheel mapping routine.
+    phases: list of (name, steering) tuples. Each phase runs the given steering value
+    at `speed` for `phase_time` seconds while sampling the encoder scalar from
+    read_write_std(...)[2] or read_encoder(). Appends a human-readable summary
+    to encoder_diag.txt.
+    """
+    try:
+        if phases is None:
+            # forward, hard-left, hard-right (short duration each)
+            phases = [('forward', 0.0), ('left', -1.0), ('right', 1.0)]
+
+        LEDs = np.array([0, 0, 0, 0, 0, 0, 0, 0])
+        summary_lines = []
+        summary_lines.append('=== Wheel mapping probe ===')
+        for name, steer in phases:
+            # sample initial encoder value
+            try:
+                ret0 = car.read_write_std(np.array([0.0, 0.0]), LEDs)
+                enc0 = None
+                if isinstance(ret0, (list, tuple)) and len(ret0) >= 3:
+                    try:
+                        enc0 = int(ret0[2])
+                    except Exception:
+                        enc0 = None
+                # also try read_encoder()
+                try:
+                    r0 = getattr(car, 'read_encoder', None)
+                    if callable(r0):
+                        v = r0()
+                        if isinstance(v, (list, tuple)) and len(v) >= 1:
+                            enc0 = int(v[0])
+                        elif isinstance(v, int):
+                            enc0 = int(v)
+                except Exception:
+                    pass
+            except Exception:
+                enc0 = None
+
+            # run phase
+            cmd = np.array([speed, steer])
+            start = time.time()
+            while time.time() - start < phase_time:
+                try:
+                    car.read_write_std(cmd, LEDs)
+                except Exception:
+                    pass
+                time.sleep(0.05)
+
+            # sample final encoder value
+            try:
+                ret1 = car.read_write_std(np.array([0.0, 0.0]), LEDs)
+                enc1 = None
+                if isinstance(ret1, (list, tuple)) and len(ret1) >= 3:
+                    try:
+                        enc1 = int(ret1[2])
+                    except Exception:
+                        enc1 = None
+                try:
+                    r1 = getattr(car, 'read_encoder', None)
+                    if callable(r1):
+                        v = r1()
+                        if isinstance(v, (list, tuple)) and len(v) >= 1:
+                            enc1 = int(v[0])
+                        elif isinstance(v, int):
+                            enc1 = int(v)
+                except Exception:
+                    pass
+            except Exception:
+                enc1 = None
+
+            delta = None
+            if enc0 is not None and enc1 is not None:
+                delta = enc1 - enc0
+            summary_lines.append(f'Phase {name}: steer={steer} enc0={enc0} enc1={enc1} delta={delta}')
+
+            # small pause between phases
+            try:
+                car.read_write_std(np.array([0.0, 0.0]), LEDs)
+            except Exception:
+                pass
+            time.sleep(0.15)
+
+        # Stop motors (safety)
+        try:
+            car.read_write_std(np.array([0.0, 0.0]), LEDs)
+        except Exception:
+            pass
+
+        # Append summary to diagnostic file
+        try:
+            with open('encoder_diag.txt', 'a') as f:
+                f.write('\n' + '\n'.join(summary_lines) + '\n')
+            print('\n'.join(summary_lines))
+            print('Appended wheel mapping summary to encoder_diag.txt')
+        except Exception as e:
+            print('Failed to append wheel mapping summary:', e)
+    except Exception as e:
+        print('Wheel mapping probe failed:', e)
+
 # Create QCar object for robot control
 myCar = QCar()
 # Create right camera object
@@ -186,6 +287,11 @@ if DIAGNOSTICS_ON:
     # Perform an active probe: briefly command the motors and log encoder-related samples
     try:
         run_active_encoder_probe(myCar, duration=2.0, speed=0.05, sample_dt=0.1)
+    except Exception:
+        pass
+    # Perform a short automated wheel mapping probe to attribute encoder increments to steering phases
+    try:
+        run_wheel_mapping_probe(myCar, phases=[('forward',0.0), ('left', -1.0), ('right', 1.0)], phase_time=0.6, speed=0.06)
     except Exception:
         pass
 
@@ -524,7 +630,13 @@ try:
         else:
             counts_per_s_l, counts_per_s_r = enc_rates
 
-        cv2.putText(display_img, f'Counts/s L: {counts_per_s_l:.1f}  R: {counts_per_s_r:.1f}', (10, 170),
+        # Ensure we have numeric rates for computation (use 0.0 when missing)
+        counts_per_s_l = float(counts_per_s_l) if counts_per_s_l is not None else 0.0
+        counts_per_s_r = float(counts_per_s_r) if counts_per_s_r is not None else 0.0
+
+        # Show 'N/A' for right channel if absent
+        r_display = f'{counts_per_s_r:.1f}' if enc and enc[1] is not None else 'N/A'
+        cv2.putText(display_img, f'Counts/s L: {counts_per_s_l:.1f}  R: {r_display}', (10, 170),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
         # Conversions: counts/s -> RPM, rad/s, m/s

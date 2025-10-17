@@ -126,7 +126,7 @@ if DIAGNOSTICS_ON:
 # Desired pixel offset from right edge for line following
 target_offset = 50
 # Forward speed of the robot (lower value for slower movement)
-speed = 0.05
+speed = 0.075
 steering_gain = 0.005  # Gain used for steering calculation
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 
@@ -446,6 +446,7 @@ finally:
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
     
+
 
 
 

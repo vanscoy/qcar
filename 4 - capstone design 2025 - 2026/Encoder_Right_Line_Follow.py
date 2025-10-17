@@ -280,10 +280,29 @@ try:
         # Calculate computation time
         calc_time_ms = (time.time() - start_calc) * 1000
 
-        # Read encoders and compute rates (ticks/sec)
-        enc = read_encoders(myCar)
-        hw_vel = read_encoder_velocity(myCar)
+        # Prepare motor command
+        mtr_cmd = np.array([speed, steering])  # Create motor command array: [speed, steering]
+        LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # Set LED pattern (example)
+
+        # Send motor command and attempt to capture encoder counts returned by read_write_std
+        enc = None
+        hw_vel = None
         now_t = time.time()
+        try:
+            ret = myCar.read_write_std(mtr_cmd, LEDs)
+            # Typical return: (current, batteryVoltage, encoderCounts)
+            if isinstance(ret, (list, tuple)) and len(ret) >= 3:
+                enc_ret = ret[2]
+                if isinstance(enc_ret, (list, tuple, np.ndarray)) and len(enc_ret) >= 2:
+                    enc = (int(enc_ret[0]), int(enc_ret[1]))
+        except Exception:
+            # If read_write_std fails to return enc, fall back to probing later
+            enc = None
+
+        # If hardware-provided velocity is available via other methods, try to get it
+        hw_vel = read_encoder_velocity(myCar)
+
+        # Compute encoder rates from counts if we have them
         if enc is not None:
             if prev_enc_counts is None:
                 prev_enc_counts = enc
@@ -299,7 +318,8 @@ try:
                 prev_enc_counts = enc
                 prev_enc_time = now_t
         else:
-            enc = (None, None)
+            # last resort: probe using API if read_write_std did not give encoderCounts
+            enc = read_encoders(myCar) or (None, None)
 
         # Put frame count, FPS, and computation time on image
         cv2.putText(display_img, f'Frames: {frame_count}  FPS: {fps}', (10, 30),
@@ -361,5 +381,7 @@ finally:
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
     
+
+
 
 

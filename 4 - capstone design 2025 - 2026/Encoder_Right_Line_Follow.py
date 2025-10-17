@@ -49,6 +49,49 @@ def run_diagnostics_once(car):
     except Exception:
         pass
 
+def run_extended_encoder_diagnostics(car):
+    """Call several encoder-related methods/attributes and append their outputs to encoder_diag.txt.
+    This helps identify where encoder counts live on this QCar instance.
+    """
+    tries = []
+    def safe_call(name):
+        try:
+            if hasattr(car, name):
+                attr = getattr(car, name)
+                if callable(attr):
+                    try:
+                        val = attr()
+                        return f'CALL {name} -> {repr(val)}'
+                    except Exception as e:
+                        return f'CALL {name} raised {e}'
+                else:
+                    return f'ATTR {name} -> {repr(attr)}'
+            else:
+                return f'NO {name}'
+        except Exception as e:
+            return f'ERR {name} -> {e}'
+
+    candidates = [
+        'read_write_std',
+        'read_encoder',
+        'mtr_encoder',
+        'read_std',
+        'read_encoder_channels_throttle',
+        'read_encoder_buffer_throttle',
+        'read_other_channels_accelerometer',
+    ]
+    for c in candidates:
+        tries.append(safe_call(c))
+
+    out = '\n=== Extended encoder diagnostics ===\n' + '\n'.join(tries) + '\n'
+    print(out)
+    try:
+        with open('encoder_diag.txt', 'a') as f:
+            f.write('\n' + out)
+        print('Appended extended diagnostics to encoder_diag.txt')
+    except Exception as e:
+        print('Failed to append extended diagnostics:', e)
+
 # Create QCar object for robot control
 myCar = QCar()
 # Create right camera object
@@ -57,6 +100,11 @@ rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate
 # Run diagnostics once (prints dir(myCar) and myCar.read() snapshot) if enabled
 if DIAGNOSTICS_ON:
     run_diagnostics_once(myCar)
+    # Append extended diagnostics to help find encoder fields
+    try:
+        run_extended_encoder_diagnostics(myCar)
+    except Exception:
+        pass
 
 # Desired pixel offset from right edge for line following
 target_offset = 50
@@ -381,6 +429,8 @@ finally:
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
     
+
+
 
 
 

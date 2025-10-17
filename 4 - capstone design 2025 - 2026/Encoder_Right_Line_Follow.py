@@ -8,9 +8,11 @@ import cv2
 import numpy as np
 # Import time for delays and timing
 import time
+import argparse
 
 # Diagnostic flag: when True, print and save myCar.read() and dir(myCar) once at startup
-DIAGNOSTICS_ON = True
+# Default False; use --diagnostics to enable at startup
+DIAGNOSTICS_ON = False
 # If no discrete encoder counts are exposed by the model/driver, fall back to using
 # the first element returned by read_write_std() as a motor velocity (revolutions/sec).
 # Set to False to disable this heuristic.
@@ -403,10 +405,19 @@ def run_per_motor_probe(car, speed=0.06, duration=0.6, sample_dt=0.05):
     except Exception as e:
         print('Per-motor probe failed:', e)
 
+# Parse CLI args for diagnostics toggle
+parser = argparse.ArgumentParser(description='Right-camera line follower (single-encoder cleanup)')
+parser.add_argument('--diagnostics', action='store_true', help='Enable startup encoder diagnostics and probes')
+args = parser.parse_args()
+
 # Create QCar object for robot control
 myCar = QCar()
 # Create right camera object
 rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate=30.0)
+
+# Honor CLI flag
+if args.diagnostics:
+    DIAGNOSTICS_ON = True
 
 # Run diagnostics once (prints dir(myCar) and myCar.read() snapshot) if enabled
 if DIAGNOSTICS_ON:
@@ -431,6 +442,8 @@ if DIAGNOSTICS_ON:
         run_per_motor_probe(myCar, speed=0.06, duration=0.5, sample_dt=0.05)
     except Exception:
         pass
+    # Turn off diagnostics to minimize runtime overhead after startup
+    DIAGNOSTICS_ON = False
 
 # Desired pixel offset from right edge for line following
 target_offset = 50
@@ -444,10 +457,10 @@ frame_count = 0
 fps = 0
 last_time = time.time()
 
-# Encoder tracking (robust to different QCar API names)
-prev_enc_counts = None
+# Encoder tracking (single scalar motor encoder)
+prev_enc_count = None
 prev_enc_time = time.time()
-enc_rates = (0.0, 0.0)
+enc_rate = 0.0
 
 # Encoder / wheel constants (QCar E8T-720-125): 720 counts per rev (single-ended)
 # Quadrature mode = 4x -> 2880 counts/rev. Adjust if your setup differs.
@@ -668,82 +681,73 @@ try:
         mtr_cmd = np.array([speed, steering])  # Create motor command array: [speed, steering]
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # Set LED pattern (example)
 
-        # Send motor command and attempt to capture encoder counts returned by read_write_std
-        enc = None
-        hw_vel = None
+        # Send motor command and attempt to capture a single motor encoder scalar
+        motor_enc = None
+        hw_counts_per_s = None
         enc_source = 'none'
         now_t = time.time()
         try:
             ret = myCar.read_write_std(mtr_cmd, LEDs)
             # Typical return: (current, batteryVoltage, encoderCounts)
-            if isinstance(ret, (list, tuple)):
-                # Common patterns: (float, voltage, counts) or (velocity, voltage, counts)
-                # If third element present, treat as counts or single-channel count
-                if len(ret) >= 3:
-                    enc_ret = ret[2]
-                    if isinstance(enc_ret, (list, tuple, np.ndarray)):
-                        if len(enc_ret) >= 2:
-                            enc = (int(enc_ret[0]), int(enc_ret[1]))
-                            enc_source = 'read_write_std[2] (counts)'
-                        elif len(enc_ret) == 1:
-                            enc = (int(enc_ret[0]), None)
-                            enc_source = 'read_write_std[2] (counts, single)'
-                    else:
-                        # third element might be a scalar int count
+            if isinstance(ret, (list, tuple)) and len(ret) >= 3:
+                enc_ret = ret[2]
+                if isinstance(enc_ret, (list, tuple, np.ndarray)):
+                    if len(enc_ret) >= 1:
                         try:
-                            enc_val = int(enc_ret)
-                            enc = (enc_val, None)
-                            enc_source = 'read_write_std[2] (counts scalar)'
+                            motor_enc = int(enc_ret[0])
+                            enc_source = 'read_write_std[2][0]'
                         except Exception:
-                            pass
-                # If no counts found but fallback enabled, consider ret[0] as velocity (rev/s)
-                if enc is None and FALLBACK_RET0_AS_RPS and len(ret) >= 1:
+                            motor_enc = None
+                else:
                     try:
-                        # ret[0] may be a small float representing rev/s or rad/s. We'll assume rev/s.
-                        rps = float(ret[0])
-                        # Convert rev/s to rad/s and m/s
-                        rad_s = rps * 2.0 * np.pi
-                        vel_m_s = rad_s * WHEEL_RADIUS_M
-                        # store as hw_vel (counts/s not available)
-                        hw_vel = (rps * ENC_COUNTS_PER_REV, None)
-                        enc_source = 'read_write_std[0] (assumed rps)'
+                        motor_enc = int(enc_ret)
+                        enc_source = 'read_write_std[2] (scalar)'
                     except Exception:
-                        pass
+                        motor_enc = None
+            # If no counts found but fallback enabled, consider ret[0] as velocity (rev/s)
+            if motor_enc is None and FALLBACK_RET0_AS_RPS and isinstance(ret, (list, tuple)) and len(ret) >= 1:
+                try:
+                    rps = float(ret[0])
+                    hw_counts_per_s = rps * ENC_COUNTS_PER_REV
+                    enc_source = 'read_write_std[0] (assumed rps)'
+                except Exception:
+                    pass
         except Exception:
-            # If read_write_std fails to return enc, fall back to probing later
-            enc = None
+            motor_enc = None
 
-        # If hardware-provided velocity is available via other methods, try to get it
+        # If hardware-provided velocity is available via other methods, prefer first channel
         vel_try = read_encoder_velocity(myCar)
         if vel_try is not None:
-            hw_vel = vel_try
-            enc_source = 'read_encoder() or read_std() velocities'
+            try:
+                hw_counts_per_s = float(vel_try[0]) if isinstance(vel_try, (list, tuple, np.ndarray)) else float(vel_try)
+                enc_source = 'read_encoder() or read_std() velocities'
+            except Exception:
+                pass
 
-        # Compute encoder rates from counts if we have them
-        if enc is not None:
-            if prev_enc_counts is None:
-                prev_enc_counts = enc
+        # Compute encoder rate from counts if we have motor_enc
+        if motor_enc is not None:
+            if prev_enc_count is None:
+                prev_enc_count = motor_enc
                 prev_enc_time = now_t
-                enc_rates = (0.0, 0.0)
+                enc_rate = 0.0
             else:
                 dt = now_t - prev_enc_time
                 if dt <= 0:
-                    enc_rates = (0.0, 0.0)
+                    enc_rate = 0.0
                 else:
-                    # handle single-channel counts (right may be None)
-                    left_rate = (enc[0] - (prev_enc_counts[0] if prev_enc_counts[0] is not None else 0)) / dt
-                    if enc[1] is None or prev_enc_counts[1] is None:
-                        right_rate = 0.0
-                    else:
-                        right_rate = (enc[1] - prev_enc_counts[1]) / dt
-                    enc_rates = (left_rate, right_rate)
-                prev_enc_counts = enc
+                    enc_rate = (motor_enc - prev_enc_count) / dt
+                prev_enc_count = motor_enc
                 prev_enc_time = now_t
         else:
-            # last resort: probe using API if read_write_std did not give encoderCounts
-            enc = read_encoders(myCar) or (None, None)
-            if enc is not None:
-                enc_source = 'read_encoders()'
+            # fallback to read_encoders() first channel if available
+            e = read_encoders(myCar)
+            if e is not None:
+                try:
+                    if isinstance(e, (list, tuple, np.ndarray)) and len(e) >= 1:
+                        motor_enc = int(e[0])
+                        enc_source = 'read_encoders()'
+                except Exception:
+                    motor_enc = None
 
         # Put frame count, FPS, and computation time on image
         cv2.putText(display_img, f'Frames: {frame_count}  FPS: {fps}', (10, 30),
@@ -756,48 +760,26 @@ try:
         cv2.putText(display_img, f'Angle: {angle:.1f} deg', (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,128,255), 2)
 
-        # Encoder display
-        # If enc is single-channel (enc = (val, None)) treat as motor encoder scalar
-        left_cnt = enc[0] if enc and enc[0] is not None else 0
-        right_cnt = enc[1] if enc and enc[1] is not None else None
-        if right_cnt is None:
-            cv2.putText(display_img, f'MotorEnc: {left_cnt}', (10, 150),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
-        else:
-            cv2.putText(display_img, f'Enc L: {left_cnt}  R: {right_cnt}', (10, 150),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
-        # Prefer hardware-provided velocity if available
-        if hw_vel is not None:
-            counts_per_s_l, counts_per_s_r = hw_vel
-        else:
-            counts_per_s_l, counts_per_s_r = enc_rates
+        # Encoder display (single motor encoder)
+        motor_cnt = motor_enc if motor_enc is not None else 0
+        cv2.putText(display_img, f'MotorEnc: {motor_cnt}', (10, 150),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
 
-        # Ensure we have numeric rates for computation (use 0.0 when missing)
-        counts_per_s_l = float(counts_per_s_l) if counts_per_s_l is not None else 0.0
-        counts_per_s_r = float(counts_per_s_r) if counts_per_s_r is not None else 0.0
-
-        # Show 'N/A' for right channel if absent; if only a motor scalar exists, label accordingly
-        if enc and enc[1] is None:
-            cv2.putText(display_img, f'Counts/s Motor: {counts_per_s_l:.1f}', (10, 170),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-        else:
-            r_display = f'{counts_per_s_r:.1f}' if enc and enc[1] is not None else 'N/A'
-            cv2.putText(display_img, f'Counts/s L: {counts_per_s_l:.1f}  R: {r_display}', (10, 170),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-
-        # Conversions: counts/s -> RPM, rad/s, m/s
-        rpm_l = (counts_per_s_l / ENC_COUNTS_PER_REV) * 60.0
-        rpm_r = (counts_per_s_r / ENC_COUNTS_PER_REV) * 60.0
-        rad_s_l = (counts_per_s_l / ENC_COUNTS_PER_REV) * 2.0 * np.pi
-        rad_s_r = (counts_per_s_r / ENC_COUNTS_PER_REV) * 2.0 * np.pi
-        vel_m_s_l = rad_s_l * WHEEL_RADIUS_M
-        vel_m_s_r = rad_s_r * WHEEL_RADIUS_M
-
-        cv2.putText(display_img, f'RPM L:{rpm_l:.1f} R:{rpm_r:.1f}', (10, 190),
+        # Determine counts/s: prefer hardware velocity if available, otherwise derived enc_rate
+        counts_per_s = float(hw_counts_per_s) if hw_counts_per_s is not None else float(enc_rate if enc_rate is not None else 0.0)
+        cv2.putText(display_img, f'Counts/s Motor: {counts_per_s:.1f}', (10, 170),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-        cv2.putText(display_img, f'Rad/s L:{rad_s_l:.2f} R:{rad_s_r:.2f}', (10, 210),
+
+        # Conversions: counts/s -> RPM, rad/s, m/s (motor only)
+        rpm_motor = (counts_per_s / ENC_COUNTS_PER_REV) * 60.0
+        rad_s_motor = (counts_per_s / ENC_COUNTS_PER_REV) * 2.0 * np.pi
+        vel_m_s_motor = rad_s_motor * WHEEL_RADIUS_M
+
+        cv2.putText(display_img, f'RPM: {rpm_motor:.1f}', (10, 190),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-        cv2.putText(display_img, f'm/s L:{vel_m_s_l:.3f} R:{vel_m_s_r:.3f}', (10, 230),
+        cv2.putText(display_img, f'Rad/s: {rad_s_motor:.2f}', (10, 210),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
+        cv2.putText(display_img, f'm/s: {vel_m_s_motor:.3f}', (10, 230),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
         # Show which source we used for encoder/velocity
@@ -814,13 +796,17 @@ try:
             print("Kill switch activated: ESC pressed.")  # Print message if ESC is pressed
             break  # Exit control loop
 
-        mtr_cmd = np.array([speed, steering])  # Create motor command array: [speed, steering]
-        LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # Set LED pattern (example)
-        myCar.read_write_std(mtr_cmd, LEDs)  # Send speed/steering/LED command to QCar
+        # Send motor command once per loop (safe write)
+        LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # LED pattern
+        try:
+            myCar.read_write_std(np.array([speed, steering]), LEDs)
+        except Exception:
+            pass
 
         time.sleep(0.05)  # Small delay for control loop timing
 finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+
 

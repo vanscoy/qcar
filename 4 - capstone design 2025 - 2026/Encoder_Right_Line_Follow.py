@@ -8,7 +8,6 @@ import cv2
 import numpy as np
 # Import time for delays and timing
 import time
-import argparse
 
 # Diagnostic flag: when True, print and save myCar.read() and dir(myCar) once at startup
 # Default False; use --diagnostics to enable at startup
@@ -18,432 +17,18 @@ DIAGNOSTICS_ON = False
 # Set to False to disable this heuristic.
 FALLBACK_RET0_AS_RPS = False
 
-def run_diagnostics_once(car):
-    """Print and save a compact diagnostic snapshot of the car object and read() output.
-    This helps map encoder keys and hardware velocity fields to wheel channels.
-    """
-    try:
-        info_lines = []
-        info_lines.append('=== myCar dir() ===')
-        try:
-            names = dir(car)
-            info_lines.extend(names)
-        except Exception as e:
-            info_lines.append(f'dir() failed: {e}')
 
-        info_lines.append('\n=== myCar.read() snapshot ===')
-        try:
-            data = None
-            if hasattr(car, 'read') and callable(getattr(car, 'read')):
-                data = car.read()
-            info_lines.append(repr(data))
-            # If dict-like, show keys to help mapping
-            if isinstance(data, dict):
-                info_lines.append('\nmyCar.read() keys:')
-                info_lines.extend([str(k) for k in data.keys()])
-        except Exception as e:
-            info_lines.append(f'read() failed: {e}')
-
-        out = '\n'.join(info_lines)
-        print(out)
-        try:
-            with open('encoder_diag.txt', 'w') as f:
-                f.write(out)
-            print('Diagnostic written to encoder_diag.txt')
-        except Exception as e:
-            print('Failed to write diagnostic file:', e)
-    except Exception:
-        pass
-
-def run_extended_encoder_diagnostics(car):
-    """Call several encoder-related methods/attributes and append their outputs to encoder_diag.txt.
-    This helps identify where encoder counts live on this QCar instance.
-    """
-    tries = []
-    def safe_call(name):
-        try:
-            if hasattr(car, name):
-                attr = getattr(car, name)
-                if callable(attr):
-                    try:
-                        val = attr()
-                        return f'CALL {name} -> {repr(val)}'
-                    except Exception as e:
-                        return f'CALL {name} raised {e}'
-                else:
-                    return f'ATTR {name} -> {repr(attr)}'
-            else:
-                return f'NO {name}'
-        except Exception as e:
-            return f'ERR {name} -> {e}'
-
-    candidates = [
-        # Avoid calling read_write_std without arguments; we'll call it explicitly with a small test command below
-        # 'read_write_std',
-        'read_encoder',
-        'mtr_encoder',
-        'read_std',
-        'read_encoder_channels_throttle',
-        'read_encoder_buffer_throttle',
-        'read_other_channels_accelerometer',
-    ]
-    for c in candidates:
-        tries.append(safe_call(c))
-
-    out = '\n=== Extended encoder diagnostics ===\n' + '\n'.join(tries) + '\n'
-    print(out)
-    try:
-        with open('encoder_diag.txt', 'a') as f:
-            f.write('\n' + out)
-        print('Appended extended diagnostics to encoder_diag.txt')
-    except Exception as e:
-        print('Failed to append extended diagnostics:', e)
-
-    # Targeted call: call read_write_std WITH a small test command to capture its real return structure.
-    try:
-        mtr_cmd_test = np.array([0.0, 0.0])
-        LEDs_test = np.array([0, 0, 0, 0, 0, 0, 0, 0])
-        try:
-            ret = car.read_write_std(mtr_cmd_test, LEDs_test)
-            txt = f'CALL read_write_std(mtr_cmd, LEDs) -> {repr(ret)}'
-        except Exception as e:
-            txt = f'CALL read_write_std(mtr_cmd, LEDs) raised {e}'
-        print(txt)
-        with open('encoder_diag.txt', 'a') as f:
-            f.write('\n' + txt + '\n')
-        print('Appended read_write_std(mtr_cmd, LEDs) result to encoder_diag.txt')
-    except Exception as e:
-        print('Failed targeted read_write_std diagnostic:', e)
-
-
-def run_active_encoder_probe(car, duration=2.0, speed=0.05, sample_dt=0.1):
-    """Active probe: briefly command the motors to move and sample encoder-related outputs.
-    Appends timestamped samples to encoder_diag.txt so we can see whether encoder values change.
-    Uses a small speed and short duration to minimize movement.
-    """
-    try:
-        start = time.time()
-        samples = []
-        mtr_cmd = np.array([speed, 0.0])
-        stop_cmd = np.array([0.0, 0.0])
-        LEDs = np.array([0, 0, 0, 0, 0, 0, 0, 0])
-        # Send command and sample repeatedly for duration
-        while time.time() - start < duration:
-            t = time.time()
-            try:
-                ret = None
-                try:
-                    ret = car.read_write_std(mtr_cmd, LEDs)
-                except Exception as e:
-                    ret = f'read_write_std raised {e}'
-                # probe read_encoder and mtr_encoder
-                r_enc = None
-                try:
-                    fn = getattr(car, 'read_encoder', None)
-                    if callable(fn):
-                        r_enc = fn()
-                except Exception as e:
-                    r_enc = f'read_encoder raised {e}'
-                try:
-                    m_enc = getattr(car, 'mtr_encoder', None)
-                except Exception as e:
-                    m_enc = f'mtr_encoder access raised {e}'
-                samples.append((t, repr(ret), repr(r_enc), repr(m_enc)))
-            except Exception:
-                pass
-            # small sleep between samples
-            time.sleep(sample_dt)
-        # Stop motors
-        try:
-            car.read_write_std(stop_cmd, LEDs)
-        except Exception:
-            pass
-
-        # Append samples to encoder_diag.txt
-        try:
-            with open('encoder_diag.txt', 'a') as f:
-                f.write('\n=== Active encoder probe samples ===\n')
-                for s in samples:
-                    ts = s[0]
-                    f.write(f'{ts}: read_write_std -> {s[1]} | read_encoder -> {s[2]} | mtr_encoder -> {s[3]}\n')
-            print('Appended active encoder probe samples to encoder_diag.txt')
-        except Exception as e:
-            print('Failed to append active probe samples:', e)
-    except Exception as e:
-        print('Active encoder probe failed:', e)
-
-
-def run_wheel_mapping_probe(car, phases=None, phase_time=0.6, speed=0.06):
-    """Automated wheel mapping routine.
-    phases: list of (name, steering) tuples. Each phase runs the given steering value
-    at `speed` for `phase_time` seconds while sampling the encoder scalar from
-    read_write_std(...)[2] or read_encoder(). Appends a human-readable summary
-    to encoder_diag.txt.
-    """
-    try:
-        if phases is None:
-            # forward, hard-left, hard-right (short duration each)
-            phases = [('forward', 0.0), ('left', -1.0), ('right', 1.0)]
-
-        LEDs = np.array([0, 0, 0, 0, 0, 0, 0, 0])
-        summary_lines = []
-        summary_lines.append('=== Wheel mapping probe ===')
-
-        for name, steer in phases:
-            # sample initial encoder values (try read_write_std()[2] then read_encoder())
-            enc0_left = None
-            enc0_right = None
-            try:
-                ret0 = car.read_write_std(np.array([0.0, 0.0]), LEDs)
-                if isinstance(ret0, (list, tuple)) and len(ret0) >= 3:
-                    enc_array0 = ret0[2]
-                    if isinstance(enc_array0, (list, tuple, np.ndarray)) and len(enc_array0) >= 2:
-                        enc0_left = int(enc_array0[0]); enc0_right = int(enc_array0[1])
-                    elif isinstance(enc_array0, (int, float)):
-                        enc0_left = int(enc_array0); enc0_right = None
-            except Exception:
-                pass
-            try:
-                r0 = getattr(car, 'read_encoder', None)
-                if callable(r0):
-                    v = r0()
-                    if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
-                        enc0_left = int(v[0]); enc0_right = int(v[1])
-                    elif isinstance(v, (list, tuple, np.ndarray)) and len(v) == 1:
-                        enc0_left = int(v[0]); enc0_right = None
-                    elif isinstance(v, int):
-                        enc0_left = int(v); enc0_right = None
-            except Exception:
-                pass
-
-            # run phase
-            cmd = np.array([speed, steer])
-            start = time.time()
-            # While driving, capture the last non-empty read_write_std return (enc values are often present
-            # only when the motor command is non-zero). We'll store the last_ret to extract encoder counts.
-            last_ret = None
-            while time.time() - start < phase_time:
-                try:
-                    ret = car.read_write_std(cmd, LEDs)
-                    last_ret = ret
-                except Exception:
-                    pass
-                time.sleep(0.05)
-
-            # derive final encoder values from the last non-empty ret while moving; fall back to read_encoder()
-            enc1_left = None
-            enc1_right = None
-            try:
-                if last_ret is not None and isinstance(last_ret, (list, tuple)) and len(last_ret) >= 3:
-                    enc_array1 = last_ret[2]
-                    if isinstance(enc_array1, (list, tuple, np.ndarray)) and len(enc_array1) >= 2:
-                        enc1_left = int(enc_array1[0]); enc1_right = int(enc_array1[1])
-                    elif isinstance(enc_array1, (int, float)):
-                        enc1_left = int(enc_array1); enc1_right = None
-            except Exception:
-                pass
-            if enc1_left is None and enc1_right is None:
-                try:
-                    r1 = getattr(car, 'read_encoder', None)
-                    if callable(r1):
-                        v = r1()
-                        if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
-                            enc1_left = int(v[0]); enc1_right = int(v[1])
-                        elif isinstance(v, (list, tuple, np.ndarray)) and len(v) == 1:
-                            enc1_left = int(v[0])
-                        elif isinstance(v, int):
-                            enc1_left = int(v)
-                except Exception:
-                    pass
-
-            # compute deltas
-            delta_left = None
-            delta_right = None
-            try:
-                if enc0_left is not None and enc1_left is not None:
-                    delta_left = enc1_left - enc0_left
-                if enc0_right is not None and enc1_right is not None:
-                    delta_right = enc1_right - enc0_right
-            except Exception:
-                delta_left = None
-                delta_right = None
-
-            summary_lines.append(
-                f'Phase {name}: steer={steer} enc_left_before={enc0_left} enc_left_after={enc1_left} delta_left={delta_left} | '
-                f'enc_right_before={enc0_right} enc_right_after={enc1_right} delta_right={delta_right}'
-            )
-
-            # small pause between phases
-            try:
-                car.read_write_std(np.array([0.0, 0.0]), LEDs)
-            except Exception:
-                pass
-            time.sleep(0.15)
-
-        # Stop motors (safety)
-        try:
-            car.read_write_std(np.array([0.0, 0.0]), LEDs)
-        except Exception:
-            pass
-
-        # Append summary to diagnostic file
-        try:
-            with open('encoder_diag.txt', 'a') as f:
-                f.write('\n' + '\n'.join(summary_lines) + '\n')
-            print('\n'.join(summary_lines))
-            print('Appended wheel mapping summary to encoder_diag.txt')
-        except Exception as e:
-            print('Failed to append wheel mapping summary:', e)
-    except Exception as e:
-        print('Wheel mapping probe failed:', e)
-def run_per_motor_probe(car, speed=0.06, duration=0.6, sample_dt=0.05):
-    """Focused per-motor probe: drive two conservative commands and log per-channel encoder changes.
-    This helps map encoder channel index -> left/right wheel without needing model changes.
-    """
-    LEDs = np.array([0, 0, 0, 0, 0, 0, 0, 0])
-
-    def sample_enc():
-        # Return (enc_left, enc_right) or (val, None) for single-channel
-        try:
-            r = car.read_write_std(np.array([0.0, 0.0]), LEDs)
-            if isinstance(r, (list, tuple)) and len(r) >= 3:
-                a = r[2]
-                if isinstance(a, (list, tuple, np.ndarray)) and len(a) >= 2:
-                    return int(a[0]), int(a[1])
-                if isinstance(a, (int, float)):
-                    return int(a), None
-        except Exception:
-            pass
-        try:
-            fn = getattr(car, 'read_encoder', None)
-            if callable(fn):
-                v = fn()
-                if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
-                    return int(v[0]), int(v[1])
-                if isinstance(v, (list, tuple, np.ndarray)) and len(v) == 1:
-                    return int(v[0]), None
-                if isinstance(v, int):
-                    return int(v), None
-        except Exception:
-            pass
-        return None, None
-
-    try:
-        with open('encoder_diag.txt', 'a') as f:
-            f.write('\n=== Per-motor probe ===\n')
-
-        # Phase A: conservative command that likely moves motor A
-        before_a = sample_enc()
-        cmdA = np.array([speed, 0.0])
-        start = time.time()
-        last_ret = None
-        while time.time() - start < duration:
-            try:
-                ret = car.read_write_std(cmdA, LEDs)
-                last_ret = ret
-            except Exception:
-                pass
-            time.sleep(sample_dt)
-        # Prefer encoder values from the last non-empty ret captured during motion
-        after_a = None
-        try:
-            if last_ret is not None and isinstance(last_ret, (list, tuple)) and len(last_ret) >= 3:
-                a = last_ret[2]
-                if isinstance(a, (list, tuple, np.ndarray)) and len(a) >= 2:
-                    after_a = (int(a[0]), int(a[1]))
-                elif isinstance(a, (int, float)):
-                    after_a = (int(a), None)
-        except Exception:
-            after_a = None
-        if after_a is None:
-            after_a = sample_enc()
-        with open('encoder_diag.txt', 'a') as f:
-            f.write(f'MotorA cmd {cmdA.tolist()} enc_before={before_a} enc_after={after_a} delta={(None if before_a[0] is None or after_a[0] is None else after_a[0]-before_a[0], None if before_a[1] is None or after_a[1] is None else after_a[1]-before_a[1])}\n')
-
-        # Stop briefly
-        try:
-            car.read_write_std(np.array([0.0, 0.0]), LEDs)
-        except Exception:
-            pass
-        time.sleep(0.15)
-
-        # Phase B: conservative command that likely moves motor B
-        before_b = sample_enc()
-        cmdB = np.array([0.0, speed])
-        start = time.time()
-        last_ret = None
-        while time.time() - start < duration:
-            try:
-                ret = car.read_write_std(cmdB, LEDs)
-                last_ret = ret
-            except Exception:
-                pass
-            time.sleep(sample_dt)
-        after_b = None
-        try:
-            if last_ret is not None and isinstance(last_ret, (list, tuple)) and len(last_ret) >= 3:
-                a = last_ret[2]
-                if isinstance(a, (list, tuple, np.ndarray)) and len(a) >= 2:
-                    after_b = (int(a[0]), int(a[1]))
-                elif isinstance(a, (int, float)):
-                    after_b = (int(a), None)
-        except Exception:
-            after_b = None
-        if after_b is None:
-            after_b = sample_enc()
-        with open('encoder_diag.txt', 'a') as f:
-            f.write(f'MotorB cmd {cmdB.tolist()} enc_before={before_b} enc_after={after_b} delta={(None if before_b[0] is None or after_b[0] is None else after_b[0]-before_b[0], None if before_b[1] is None or after_b[1] is None else after_b[1]-before_b[1])}\n')
-
-        # Stop motors
-        try:
-            car.read_write_std(np.array([0.0, 0.0]), LEDs)
-        except Exception:
-            pass
-        with open('encoder_diag.txt', 'a') as f:
-            f.write('Appended per-motor probe results.\n')
-        print('Per-motor probe appended to encoder_diag.txt')
-    except Exception as e:
-        print('Per-motor probe failed:', e)
+# NOTE: Diagnostics/probe helper functions were removed to keep the runtime script
+# small and focused. The remaining helper functions `read_encoder_velocity` and
+# `read_encoders` are retained because they're used at runtime to obtain encoder
+# values when available.
 
 # Parse CLI args for diagnostics toggle
-parser = argparse.ArgumentParser(description='Right-camera line follower (single-encoder cleanup)')
-parser.add_argument('--diagnostics', action='store_true', help='Enable startup encoder diagnostics and probes')
-args = parser.parse_args()
 
 # Create QCar object for robot control
 myCar = QCar()
 # Create right camera object
 rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate=30.0)
-
-# Honor CLI flag
-if args.diagnostics:
-    DIAGNOSTICS_ON = True
-
-# Run diagnostics once (prints dir(myCar) and myCar.read() snapshot) if enabled
-if DIAGNOSTICS_ON:
-    run_diagnostics_once(myCar)
-    # Append extended diagnostics to help find encoder fields
-    try:
-        run_extended_encoder_diagnostics(myCar)
-    except Exception:
-        pass
-    # Perform an active probe: briefly command the motors and log encoder-related samples
-    try:
-        run_active_encoder_probe(myCar, duration=2.0, speed=0.05, sample_dt=0.1)
-    except Exception:
-        pass
-    # Perform a short automated wheel mapping probe to attribute encoder increments to steering phases
-    try:
-        run_wheel_mapping_probe(myCar, phases=[('forward',0.0), ('left', -1.0), ('right', 1.0)], phase_time=0.6, speed=0.06)
-    except Exception:
-        pass
-    # Perform a per-motor probe to disambiguate encoder channel mapping
-    try:
-        run_per_motor_probe(myCar, speed=0.06, duration=0.5, sample_dt=0.05)
-    except Exception:
-        pass
-    # Turn off diagnostics to minimize runtime overhead after startup
-    DIAGNOSTICS_ON = False
 
 # Desired pixel offset from right edge for line following
 target_offset = 50
@@ -760,26 +345,29 @@ try:
         cv2.putText(display_img, f'Angle: {angle:.1f} deg', (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,128,255), 2)
 
-        # Encoder display (single motor encoder)
-        motor_cnt = motor_enc if motor_enc is not None else 0
-        cv2.putText(display_img, f'MotorEnc: {motor_cnt}', (10, 150),
+        # Encoder display (single forward/combined encoder)
+        # The hardware exposes a single scalar encoder-like value that appears to
+        # represent net forward rotation (combined/aggregate). We label it as
+        # 'ForwardEnc (combined)' to reduce confusion.
+        forward_cnt = motor_enc if motor_enc is not None else 0
+        cv2.putText(display_img, f'ForwardEnc (combined): {forward_cnt}', (10, 150),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
 
         # Determine counts/s: prefer hardware velocity if available, otherwise derived enc_rate
         counts_per_s = float(hw_counts_per_s) if hw_counts_per_s is not None else float(enc_rate if enc_rate is not None else 0.0)
-        cv2.putText(display_img, f'Counts/s Motor: {counts_per_s:.1f}', (10, 170),
+        cv2.putText(display_img, f'Counts/s Forward: {counts_per_s:.1f}', (10, 170),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
-        # Conversions: counts/s -> RPM, rad/s, m/s (motor only)
-        rpm_motor = (counts_per_s / ENC_COUNTS_PER_REV) * 60.0
-        rad_s_motor = (counts_per_s / ENC_COUNTS_PER_REV) * 2.0 * np.pi
-        vel_m_s_motor = rad_s_motor * WHEEL_RADIUS_M
+        # Conversions: counts/s -> RPM, rad/s, m/s (forward/combined)
+        rpm_forward = (counts_per_s / ENC_COUNTS_PER_REV) * 60.0
+        rad_s_forward = (counts_per_s / ENC_COUNTS_PER_REV) * 2.0 * np.pi
+        vel_m_s_forward = rad_s_forward * WHEEL_RADIUS_M
 
-        cv2.putText(display_img, f'RPM: {rpm_motor:.1f}', (10, 190),
+        cv2.putText(display_img, f'RPM: {rpm_forward:.1f}', (10, 190),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-        cv2.putText(display_img, f'Rad/s: {rad_s_motor:.2f}', (10, 210),
+        cv2.putText(display_img, f'Rad/s: {rad_s_forward:.2f}', (10, 210),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-        cv2.putText(display_img, f'm/s: {vel_m_s_motor:.3f}', (10, 230),
+        cv2.putText(display_img, f'm/s: {vel_m_s_forward:.3f}', (10, 230),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
         # Show which source we used for encoder/velocity
@@ -808,5 +396,6 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+    
 
 

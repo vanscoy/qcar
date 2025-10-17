@@ -87,19 +87,44 @@ def read_encoder_velocity(car):
     """Try to read hardware-provided encoder velocities (counts/s) from the car.
     Returns (left_counts_per_s, right_counts_per_s) or None.
     """
+    # Try QCar-specific read methods/attributes first
     try:
-        if hasattr(car, 'read') and callable(getattr(car, 'read')):
+        # 1) read_encoder() method (common on some QCar APIs)
+        fn = getattr(car, 'read_encoder', None)
+        if callable(fn):
             try:
-                data = car.read()
+                v = fn()
+                if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
+                    return float(v[0]), float(v[1])
+                if isinstance(v, dict):
+                    for k in ('encoders', 'encoder_counts', 'encoderCounts', 'velocity'):
+                        if k in v and isinstance(v[k], (list, tuple, np.ndarray)) and len(v[k]) >= 2:
+                            return float(v[k][0]), float(v[k][1])
+            except Exception:
+                pass
+
+        # 2) mtr_encoder attribute (some APIs expose this)
+        if hasattr(car, 'mtr_encoder'):
+            v = getattr(car, 'mtr_encoder')
+            if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
+                return float(v[0]), float(v[1])
+            if isinstance(v, dict):
+                for k in ('encoders', 'encoder_counts', 'encoderCounts', 'velocity'):
+                    if k in v and isinstance(v[k], (list, tuple, np.ndarray)) and len(v[k]) >= 2:
+                        return float(v[k][0]), float(v[k][1])
+
+        # 3) read_std() may return a dict with velocities
+        fn = getattr(car, 'read_std', None)
+        if callable(fn):
+            try:
+                data = fn()
                 if isinstance(data, dict):
-                    # common places: 'velocity', 'velocities', 'other', 'encoder_velocity'
                     for k in ('velocity', 'velocities', 'encoder_velocity', 'encoder_velocities', 'other'):
                         v = data.get(k) if k in data else None
                         if v is None:
                             continue
                         if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
                             return float(v[0]), float(v[1])
-                        # some APIs use dicts under 'other'
                         if isinstance(v, dict):
                             for subk in ('encoders','encoder_counts','encoderCounts','velocity'):
                                 if subk in v and isinstance(v[subk], (list, tuple, np.ndarray)) and len(v[subk]) >= 2:
@@ -107,7 +132,8 @@ def read_encoder_velocity(car):
             except Exception:
                 pass
     except Exception:
-        return None
+        pass
+    # No hardware velocity found
     return None
 
 def read_encoders(car):
@@ -115,29 +141,67 @@ def read_encoders(car):
     This function is defensive: it won't raise if the API doesn't expose encoders the same way.
     """
     try:
-        # try common method names that return a tuple/list
+        # 1) prefer read_encoder() if available
+        fn = getattr(car, 'read_encoder', None)
+        if callable(fn):
+            try:
+                val = fn()
+                if isinstance(val, (list, tuple, np.ndarray)) and len(val) >= 2:
+                    return int(val[0]), int(val[1])
+                if isinstance(val, dict):
+                    for k in ('encoders', 'encoder_counts', 'encoderCounts', 'mtr_encoder'):
+                        if k in val and isinstance(val[k], (list, tuple, np.ndarray)) and len(val[k]) >= 2:
+                            return int(val[k][0]), int(val[k][1])
+            except Exception:
+                pass
+
+        # 2) attribute mtr_encoder (common on this QCar API)
+        if hasattr(car, 'mtr_encoder'):
+            val = getattr(car, 'mtr_encoder')
+            if isinstance(val, (list, tuple, np.ndarray)) and len(val) >= 2:
+                return int(val[0]), int(val[1])
+            if isinstance(val, dict):
+                for k in ('encoders', 'encoder_counts', 'encoderCounts'):
+                    if k in val and isinstance(val[k], (list, tuple, np.ndarray)) and len(val[k]) >= 2:
+                        return int(val[k][0]), int(val[k][1])
+
+        # 3) try read_std() which often returns a data dict
+        fn = getattr(car, 'read_std', None)
+        if callable(fn):
+            try:
+                data = fn()
+                if isinstance(data, dict):
+                    for k in ('encoders', 'encoder_counts', 'encoderCounts', 'mtr_encoder'):
+                        if k in data and isinstance(data[k], (list, tuple, np.ndarray)) and len(data[k]) >= 2:
+                            return int(data[k][0]), int(data[k][1])
+            except Exception:
+                pass
+
+        # 4) fallback: try several common method/attr names
         for name in ('get_encoders', 'read_encoders', 'getEncoderCounts', 'readEncoderCounts'):
             fn = getattr(car, name, None)
             if callable(fn):
-                val = fn()
+                try:
+                    val = fn()
+                except Exception:
+                    val = None
                 if val is None:
                     continue
-                # expect iterable with two elements
                 if isinstance(val, (list, tuple, np.ndarray)) and len(val) >= 2:
                     return int(val[0]), int(val[1])
-        # try common attribute names
+
         for name in ('encoder_counts', 'encoders', 'encoderCounts'):
             val = getattr(car, name, None)
             if val is None:
                 continue
             if isinstance(val, (list, tuple, np.ndarray)) and len(val) >= 2:
                 return int(val[0]), int(val[1])
-        # as a last resort, some APIs return a dict from read()
-        if hasattr(car, 'read') and callable(getattr(car, 'read')):
+
+        # 5) as a last resort, some APIs return a dict from read_std() or similar
+        if hasattr(car, 'read_std') and callable(getattr(car, 'read_std')):
             try:
-                data = car.read()
+                data = car.read_std()
                 if isinstance(data, dict):
-                    # look for common keys
                     for k in ('encoders', 'encoder_counts', 'encoderCounts'):
                         if k in data and isinstance(data[k], (list, tuple, np.ndarray)) and len(data[k]) >= 2:
                             return int(data[k][0]), int(data[k][1])
@@ -297,3 +361,5 @@ finally:
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
     
+
+

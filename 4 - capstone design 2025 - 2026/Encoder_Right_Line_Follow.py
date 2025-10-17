@@ -186,29 +186,33 @@ def run_wheel_mapping_probe(car, phases=None, phase_time=0.6, speed=0.06):
         LEDs = np.array([0, 0, 0, 0, 0, 0, 0, 0])
         summary_lines = []
         summary_lines.append('=== Wheel mapping probe ===')
+
         for name, steer in phases:
-            # sample initial encoder value
+            # sample initial encoder values (try read_write_std()[2] then read_encoder())
+            enc0_left = None
+            enc0_right = None
             try:
                 ret0 = car.read_write_std(np.array([0.0, 0.0]), LEDs)
-                enc0 = None
                 if isinstance(ret0, (list, tuple)) and len(ret0) >= 3:
-                    try:
-                        enc0 = int(ret0[2])
-                    except Exception:
-                        enc0 = None
-                # also try read_encoder()
-                try:
-                    r0 = getattr(car, 'read_encoder', None)
-                    if callable(r0):
-                        v = r0()
-                        if isinstance(v, (list, tuple)) and len(v) >= 1:
-                            enc0 = int(v[0])
-                        elif isinstance(v, int):
-                            enc0 = int(v)
-                except Exception:
-                    pass
+                    enc_array0 = ret0[2]
+                    if isinstance(enc_array0, (list, tuple, np.ndarray)) and len(enc_array0) >= 2:
+                        enc0_left = int(enc_array0[0]); enc0_right = int(enc_array0[1])
+                    elif isinstance(enc_array0, (int, float)):
+                        enc0_left = int(enc_array0); enc0_right = None
             except Exception:
-                enc0 = None
+                pass
+            try:
+                r0 = getattr(car, 'read_encoder', None)
+                if callable(r0):
+                    v = r0()
+                    if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
+                        enc0_left = int(v[0]); enc0_right = int(v[1])
+                    elif isinstance(v, (list, tuple, np.ndarray)) and len(v) == 1:
+                        enc0_left = int(v[0]); enc0_right = None
+                    elif isinstance(v, int):
+                        enc0_left = int(v); enc0_right = None
+            except Exception:
+                pass
 
             # run phase
             cmd = np.array([speed, steer])
@@ -220,32 +224,48 @@ def run_wheel_mapping_probe(car, phases=None, phase_time=0.6, speed=0.06):
                     pass
                 time.sleep(0.05)
 
-            # sample final encoder value
+            # sample final encoder values
+            enc1_left = None
+            enc1_right = None
             try:
                 ret1 = car.read_write_std(np.array([0.0, 0.0]), LEDs)
-                enc1 = None
                 if isinstance(ret1, (list, tuple)) and len(ret1) >= 3:
-                    try:
-                        enc1 = int(ret1[2])
-                    except Exception:
-                        enc1 = None
-                try:
-                    r1 = getattr(car, 'read_encoder', None)
-                    if callable(r1):
-                        v = r1()
-                        if isinstance(v, (list, tuple)) and len(v) >= 1:
-                            enc1 = int(v[0])
-                        elif isinstance(v, int):
-                            enc1 = int(v)
-                except Exception:
-                    pass
+                    enc_array1 = ret1[2]
+                    if isinstance(enc_array1, (list, tuple, np.ndarray)) and len(enc_array1) >= 2:
+                        enc1_left = int(enc_array1[0]); enc1_right = int(enc_array1[1])
+                    elif isinstance(enc_array1, (int, float)):
+                        enc1_left = int(enc_array1); enc1_right = None
             except Exception:
-                enc1 = None
+                pass
+            try:
+                r1 = getattr(car, 'read_encoder', None)
+                if callable(r1):
+                    v = r1()
+                    if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
+                        enc1_left = int(v[0]); enc1_right = int(v[1])
+                    elif isinstance(v, (list, tuple, np.ndarray)) and len(v) == 1:
+                        enc1_left = int(v[0])
+                    elif isinstance(v, int):
+                        enc1_left = int(v)
+            except Exception:
+                pass
 
-            delta = None
-            if enc0 is not None and enc1 is not None:
-                delta = enc1 - enc0
-            summary_lines.append(f'Phase {name}: steer={steer} enc0={enc0} enc1={enc1} delta={delta}')
+            # compute deltas
+            delta_left = None
+            delta_right = None
+            try:
+                if enc0_left is not None and enc1_left is not None:
+                    delta_left = enc1_left - enc0_left
+                if enc0_right is not None and enc1_right is not None:
+                    delta_right = enc1_right - enc0_right
+            except Exception:
+                delta_left = None
+                delta_right = None
+
+            summary_lines.append(
+                f'Phase {name}: steer={steer} enc_left_before={enc0_left} enc_left_after={enc1_left} delta_left={delta_left} | '
+                f'enc_right_before={enc0_right} enc_right_after={enc1_right} delta_right={delta_right}'
+            )
 
             # small pause between phases
             try:
@@ -270,6 +290,87 @@ def run_wheel_mapping_probe(car, phases=None, phase_time=0.6, speed=0.06):
             print('Failed to append wheel mapping summary:', e)
     except Exception as e:
         print('Wheel mapping probe failed:', e)
+def run_per_motor_probe(car, speed=0.06, duration=0.6, sample_dt=0.05):
+    """Focused per-motor probe: drive two conservative commands and log per-channel encoder changes.
+    This helps map encoder channel index -> left/right wheel without needing model changes.
+    """
+    LEDs = np.array([0, 0, 0, 0, 0, 0, 0, 0])
+
+    def sample_enc():
+        # Return (enc_left, enc_right) or (val, None) for single-channel
+        try:
+            r = car.read_write_std(np.array([0.0, 0.0]), LEDs)
+            if isinstance(r, (list, tuple)) and len(r) >= 3:
+                a = r[2]
+                if isinstance(a, (list, tuple, np.ndarray)) and len(a) >= 2:
+                    return int(a[0]), int(a[1])
+                if isinstance(a, (int, float)):
+                    return int(a), None
+        except Exception:
+            pass
+        try:
+            fn = getattr(car, 'read_encoder', None)
+            if callable(fn):
+                v = fn()
+                if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
+                    return int(v[0]), int(v[1])
+                if isinstance(v, (list, tuple, np.ndarray)) and len(v) == 1:
+                    return int(v[0]), None
+                if isinstance(v, int):
+                    return int(v), None
+        except Exception:
+            pass
+        return None, None
+
+    try:
+        with open('encoder_diag.txt', 'a') as f:
+            f.write('\n=== Per-motor probe ===\n')
+
+        # Phase A: conservative command that likely moves motor A
+        before_a = sample_enc()
+        cmdA = np.array([speed, 0.0])
+        start = time.time()
+        while time.time() - start < duration:
+            try:
+                car.read_write_std(cmdA, LEDs)
+            except Exception:
+                pass
+            time.sleep(sample_dt)
+        after_a = sample_enc()
+        with open('encoder_diag.txt', 'a') as f:
+            f.write(f'MotorA cmd {cmdA.tolist()} enc_before={before_a} enc_after={after_a} delta={(None if before_a[0] is None or after_a[0] is None else after_a[0]-before_a[0], None if before_a[1] is None or after_a[1] is None else after_a[1]-before_a[1])}\n')
+
+        # Stop briefly
+        try:
+            car.read_write_std(np.array([0.0, 0.0]), LEDs)
+        except Exception:
+            pass
+        time.sleep(0.15)
+
+        # Phase B: conservative command that likely moves motor B
+        before_b = sample_enc()
+        cmdB = np.array([0.0, speed])
+        start = time.time()
+        while time.time() - start < duration:
+            try:
+                car.read_write_std(cmdB, LEDs)
+            except Exception:
+                pass
+            time.sleep(sample_dt)
+        after_b = sample_enc()
+        with open('encoder_diag.txt', 'a') as f:
+            f.write(f'MotorB cmd {cmdB.tolist()} enc_before={before_b} enc_after={after_b} delta={(None if before_b[0] is None or after_b[0] is None else after_b[0]-before_b[0], None if before_b[1] is None or after_b[1] is None else after_b[1]-before_b[1])}\n')
+
+        # Stop motors
+        try:
+            car.read_write_std(np.array([0.0, 0.0]), LEDs)
+        except Exception:
+            pass
+        with open('encoder_diag.txt', 'a') as f:
+            f.write('Appended per-motor probe results.\n')
+        print('Per-motor probe appended to encoder_diag.txt')
+    except Exception as e:
+        print('Per-motor probe failed:', e)
 
 # Create QCar object for robot control
 myCar = QCar()
@@ -292,6 +393,11 @@ if DIAGNOSTICS_ON:
     # Perform a short automated wheel mapping probe to attribute encoder increments to steering phases
     try:
         run_wheel_mapping_probe(myCar, phases=[('forward',0.0), ('left', -1.0), ('right', 1.0)], phase_time=0.6, speed=0.06)
+    except Exception:
+        pass
+    # Perform a per-motor probe to disambiguate encoder channel mapping
+    try:
+        run_per_motor_probe(myCar, speed=0.06, duration=0.5, sample_dt=0.05)
     except Exception:
         pass
 
@@ -677,5 +783,6 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+
 
 

@@ -72,7 +72,8 @@ def run_extended_encoder_diagnostics(car):
             return f'ERR {name} -> {e}'
 
     candidates = [
-        'read_write_std',
+        # Avoid calling read_write_std without arguments; we'll call it explicitly with a small test command below
+        # 'read_write_std',
         'read_encoder',
         'mtr_encoder',
         'read_std',
@@ -91,6 +92,22 @@ def run_extended_encoder_diagnostics(car):
         print('Appended extended diagnostics to encoder_diag.txt')
     except Exception as e:
         print('Failed to append extended diagnostics:', e)
+
+    # Targeted call: call read_write_std WITH a small test command to capture its real return structure.
+    try:
+        mtr_cmd_test = np.array([0.0, 0.0])
+        LEDs_test = np.array([0, 0, 0, 0, 0, 0, 0, 0])
+        try:
+            ret = car.read_write_std(mtr_cmd_test, LEDs_test)
+            txt = f'CALL read_write_std(mtr_cmd, LEDs) -> {repr(ret)}'
+        except Exception as e:
+            txt = f'CALL read_write_std(mtr_cmd, LEDs) raised {e}'
+        print(txt)
+        with open('encoder_diag.txt', 'a') as f:
+            f.write('\n' + txt + '\n')
+        print('Appended read_write_std(mtr_cmd, LEDs) result to encoder_diag.txt')
+    except Exception as e:
+        print('Failed targeted read_write_std diagnostic:', e)
 
 # Create QCar object for robot control
 myCar = QCar()
@@ -429,9 +446,6 @@ finally:
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
     
-
-
-
 
 
 

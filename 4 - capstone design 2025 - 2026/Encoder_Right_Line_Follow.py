@@ -38,7 +38,7 @@ target_offset = 50
 # line runs parallel to the robot.
 DESIRED_GAP_PIX = 40
 # Forward speed of the robot (lower value for slower movement)
-speed = 0.08
+speed = 0.082
 steering_gain = 0.005  # Gain used for steering calculation
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # Adaptive speed tuning: when steering is large (close to ±1) reduce forward speed
@@ -558,3 +558,4 @@ finally:
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
     
+

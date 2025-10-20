@@ -337,8 +337,8 @@ try:
             else:
                 raw_steering = error * steering_gain
 
-            # clamp before smoothing
-            raw_steering = float(np.clip(raw_steering, -1.0, 1.0))
+            # clamp before smoothing (use actual vehicle steering range: -0.5 .. 0.5)
+            raw_steering = float(np.clip(raw_steering, -0.5, 0.5))
 
             # freeze steering if requested (helps test mechanical centering)
             if STEERING_FREEZE:
@@ -406,6 +406,8 @@ try:
             adaptive_speed = MIN_SPEED
         if adaptive_speed > speed:
             adaptive_speed = float(speed)
+        # Final safety clamp: ensure steering is within hardware limits
+        steering = float(np.clip(steering, -0.5, 0.5))
         mtr_cmd = np.array([adaptive_speed, steering])  # Create motor command array: [speed, steering]
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # Set LED pattern (example)
 

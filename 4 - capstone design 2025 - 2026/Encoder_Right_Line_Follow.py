@@ -36,7 +36,7 @@ target_offset = 50
 # Positive moves the red dot to the right of the detected centroid in the
 # right-crop coordinate system. Tune this to reduce continuous turning when the
 # line runs parallel to the robot.
-DESIRED_GAP_PIX = 40
+DESIRED_GAP_PIX = 80
 # Forward speed of the robot (lower value for slower movement)
 speed = 0.075
 steering_gain = 0.005  # Gain used for steering calculation
@@ -520,4 +520,5 @@ finally:
     
 
     
+
 

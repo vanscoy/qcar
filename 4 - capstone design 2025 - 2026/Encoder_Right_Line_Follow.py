@@ -45,7 +45,8 @@ max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # to avoid aggressive turns causing the car to run off course. The commanded speed
 # will be scaled in proportion to (1 - SPEED_REDUCTION_FACTOR * |steering|)
 # and clamped to [MIN_SPEED, speed].
-MIN_SPEED = 0.02
+# Minimum commanded forward speed (do not go below this to overcome static friction)
+MIN_SPEED = 0.05
 # Fraction of speed to remove at maximum steering magnitude (0..1)
 SPEED_REDUCTION_FACTOR = 0.75
 
@@ -317,8 +318,17 @@ try:
             h, w, _ = display_img.shape
             # centroid_full is available in overlay_info['centroid'] (full-image coords)
             cx_full, cy_full = overlay_info['centroid']
-            # Compute red-dot position a fixed number of pixels to the right of the blue centroid
-            red_x = int(cx_full + DESIRED_GAP_PIX)
+            # Compute red-dot position as a stationary image target at the configured
+            # `target_offset`. `target_offset` is measured from the right edge of the
+            # right-crop region; convert it to full-image coordinates so the red dot
+            # stays fixed on the display.
+            # right-crop left edge in full-image coords is int(w*0.7)
+            right_crop_left = int(w * 0.7)
+            # target_offset is pixels from the right edge of the right-crop; the
+            # right edge of the right-crop in full-image coords is (w - 1)
+            target_x_in_right_crop = int(target_offset)
+            # Convert target x to full-image coordinates
+            red_x = right_crop_left + target_x_in_right_crop
             # clamp to image bounds
             if red_x < 0:
                 red_x = 0
@@ -328,6 +338,8 @@ try:
             cv2.circle(display_img, (red_x, red_y), 8, (0,0,255), -1)
             # Draw a green line between blue centroid and red target and show gap
             cv2.line(display_img, (int(cx_full), int(cy_full)), (red_x, red_y), (0,255,0), 2)
+            # Compute gap as pixel distance between the detected centroid (blue)
+            # and the stationary red target.
             actual_gap = ((red_x - int(cx_full))**2 + (red_y - int(cy_full))**2) ** 0.5
             cv2.putText(display_img, f'Gap px: {actual_gap:.1f}', (10, 340),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
@@ -506,3 +518,6 @@ finally:
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
     
+
+    
+

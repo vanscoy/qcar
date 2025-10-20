@@ -46,7 +46,7 @@ max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # will be scaled in proportion to (1 - SPEED_REDUCTION_FACTOR * |steering|)
 # and clamped to [MIN_SPEED, speed].
 # Minimum commanded forward speed (do not go below this to overcome static friction)
-MIN_SPEED = 0.06
+MIN_SPEED = 0.07
 # Fraction of speed to remove at maximum steering magnitude (0..1)
 SPEED_REDUCTION_FACTOR = 0.75
 

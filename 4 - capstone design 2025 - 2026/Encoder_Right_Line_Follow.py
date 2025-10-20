@@ -226,9 +226,9 @@ def read_encoders(car):
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    # Crop lower half and right 30% of the image for line detection
+    # Crop lower half and right 80% of the image for line detection
     lower_half = image[h//2:h, :]  # Only lower half
-    right_crop = lower_half[:, int(w*0.7):w]  # Crop right 30% of lower half
+    right_crop = lower_half[:, int(w*0.2):w]  # Crop right 80% of lower half
     gray = cv2.cvtColor(right_crop, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
@@ -274,8 +274,8 @@ def get_right_line_offset(image):
 
     largest, cx, cy, area, distance = best
     # Prepare overlay info in full-image coordinates
-    contour_full = largest + np.array([int(w*0.7), h//2])
-    centroid_full = (int(w*0.7) + cx, h//2 + cy)
+    contour_full = largest + np.array([int(w*0.2), h//2])
+    centroid_full = (int(w*0.2) + cx, h//2 + cy)
     overlay_info = {
         'contour': contour_full,
         'centroid': centroid_full,
@@ -303,7 +303,7 @@ try:
         display_img = img.copy()  # Show full camera view
 
         # Draw a yellow rectangle to show the right-crop / lower-half processing area
-        crop_left = int(w * 0.7)
+        crop_left = int(w * 0.2)
         crop_top = int(h // 2)
         crop_right = w - 1
         crop_bottom = h - 1
@@ -363,7 +363,7 @@ try:
             # Apply desired gap (positive => red target moves right)
             red_x_full = full_center_x + int(DESIRED_GAP_PIX)
             # Convert to right-crop coordinates for computing steering error
-            right_crop_left = int(w * 0.7)
+            right_crop_left = int(w * 0.2)
             target_x_in_right_crop = int(red_x_full - right_crop_left)
             red_x = red_x_full
             # clamp to image bounds

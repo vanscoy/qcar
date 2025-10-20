@@ -32,6 +32,11 @@ rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate
 
 # Desired pixel offset from right edge for line following
 target_offset = 50
+# Desired pixel gap between detected centroid (blue) and the red target dot.
+# Positive moves the red dot to the right of the detected centroid in the
+# right-crop coordinate system. Tune this to reduce continuous turning when the
+# line runs parallel to the robot.
+DESIRED_GAP_PIX = 40
 # Forward speed of the robot (lower value for slower movement)
 speed = 0.075
 steering_gain = 0.005  # Gain used for steering calculation
@@ -299,16 +304,33 @@ try:
 
         # Draw overlays and frame info
         if overlay_info is not None:
-            error = target_offset - overlay_info['offset']  # Calculate error from desired offset
+            # Adjust steering target so the red dot is DESIRED_GAP_PIX away from the
+            # detected centroid. This effectively shifts the desired centroid
+            # position to (target_offset - DESIRED_GAP_PIX).
+            effective_target_offset = int(target_offset) - int(DESIRED_GAP_PIX)
+            error = effective_target_offset - overlay_info['offset']  # Calculate error from desired offset
             steering = np.clip(error * steering_gain, -1, 1)  # Reduced gain for smoother turns
             # Draw overlays on full image
             cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
             cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
             # Draw target position as red dot
             h, w, _ = display_img.shape
-            target_x = int(w * 0.7) + target_offset
-            target_y = h // 2 + (h // 4)  # Middle of cropped lower half
-            cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
+            # centroid_full is available in overlay_info['centroid'] (full-image coords)
+            cx_full, cy_full = overlay_info['centroid']
+            # Compute red-dot position a fixed number of pixels to the right of the blue centroid
+            red_x = int(cx_full + DESIRED_GAP_PIX)
+            # clamp to image bounds
+            if red_x < 0:
+                red_x = 0
+            if red_x >= w:
+                red_x = w - 1
+            red_y = int(cy_full)
+            cv2.circle(display_img, (red_x, red_y), 8, (0,0,255), -1)
+            # Draw a green line between blue centroid and red target and show gap
+            cv2.line(display_img, (int(cx_full), int(cy_full)), (red_x, red_y), (0,255,0), 2)
+            actual_gap = ((red_x - int(cx_full))**2 + (red_y - int(cy_full))**2) ** 0.5
+            cv2.putText(display_img, f'Gap px: {actual_gap:.1f}', (10, 340),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
             # Update previous centroid (local coordinates within right-crop)
             try:
                 prev_line_centroid = overlay_info.get('centroid_local', prev_line_centroid)
@@ -483,3 +505,4 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+    

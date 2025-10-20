@@ -36,6 +36,13 @@ target_offset = 50
 speed = 0.075
 steering_gain = 0.005  # Gain used for steering calculation
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
+# Adaptive speed tuning: when steering is large (close to ±1) reduce forward speed
+# to avoid aggressive turns causing the car to run off course. The commanded speed
+# will be scaled in proportion to (1 - SPEED_REDUCTION_FACTOR * |steering|)
+# and clamped to [MIN_SPEED, speed].
+MIN_SPEED = 0.02
+# Fraction of speed to remove at maximum steering magnitude (0..1)
+SPEED_REDUCTION_FACTOR = 0.75
 
 # Frame counter and FPS calculation
 frame_count = 0
@@ -48,6 +55,13 @@ prev_enc_time = time.time()
 enc_rate = 0.0
 # Cumulative encoder counts observed since script start (raw units)
 cumulative_counts = 0
+
+# Tracking bias: prefer contours close to the previously-detected contour.
+# This helps ignore spurious detections far from the last known line location.
+# TRACK_DIST_SCALE (pixels) controls how quickly distance penalizes area.
+prev_line_centroid = None  # (x,y) in right-crop coordinates from previous frame
+TRACK_DIST_SCALE = 50.0
+MIN_CONTOUR_AREA = 100  # ignore tiny contours
 
 # Encoder / wheel constants (QCar E8T-720-125): 720 counts per rev (single-ended)
 # Quadrature mode = 4x -> 2880 counts/rev. Adjust if your setup differs.
@@ -206,22 +220,59 @@ def get_right_line_offset(image):
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
     overlay_info = None
-    if contours:  # If any contours are found
-        largest = max(contours, key=cv2.contourArea)  # Select the largest contour (assumed to be the line)
-        M = cv2.moments(largest)  # Calculate moments for the largest contour
-        if M['m00'] > 0:  # Prevent division by zero
-            cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour (in right_crop)
-            cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour (in right_crop)
-            # Prepare overlay info for full image
-            contour_full = largest + np.array([int(w*0.7), h//2])
-            centroid_full = (int(w*0.7)+cx, h//2+cy)
-            overlay_info = {
-                'contour': contour_full,
-                'centroid': centroid_full,
-                'offset': cx
-            }
-            return overlay_info  # Return overlay info
-    return None  # Return None if no line is found
+    if not contours:
+        return None
+
+    # Score contours using area and distance to previous centroid (if known).
+    best_score = -1.0
+    best = None
+    # Compute previous centroid in right_crop coordinates if available
+    prev = None
+    try:
+        global prev_line_centroid
+        prev = prev_line_centroid
+    except Exception:
+        prev = None
+
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < MIN_CONTOUR_AREA:
+            continue
+        M = cv2.moments(c)
+        if M['m00'] == 0:
+            continue
+        cx = int(M['m10'] / M['m00'])
+        cy = int(M['m01'] / M['m00'])
+        # distance to previous centroid (in pixels)
+        if prev is None:
+            distance = 0.0
+        else:
+            dx = float(cx - prev[0])
+            dy = float(cy - prev[1])
+            distance = (dx*dx + dy*dy) ** 0.5
+        # score: area reduced by distance; dividing by (1 + distance/scale) keeps units sane
+        score = float(area) / (1.0 + (distance / TRACK_DIST_SCALE))
+        if score > best_score:
+            best_score = score
+            best = (c, cx, cy, area, distance)
+
+    if best is None:
+        return None
+
+    largest, cx, cy, area, distance = best
+    # Prepare overlay info in full-image coordinates
+    contour_full = largest + np.array([int(w*0.7), h//2])
+    centroid_full = (int(w*0.7) + cx, h//2 + cy)
+    overlay_info = {
+        'contour': contour_full,
+        'centroid': centroid_full,
+        'offset': cx,
+        'centroid_local': (cx, cy),
+        'area': area,
+        'distance_to_prev': distance,
+        'score': best_score,
+    }
+    return overlay_info  # Return overlay info
 
 try:
     while True:  # Main control loop
@@ -258,14 +309,33 @@ try:
             target_x = int(w * 0.7) + target_offset
             target_y = h // 2 + (h // 4)  # Middle of cropped lower half
             cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
+            # Update previous centroid (local coordinates within right-crop)
+            try:
+                prev_line_centroid = overlay_info.get('centroid_local', prev_line_centroid)
+            except Exception:
+                prev_line_centroid = prev_line_centroid
+            # Debug: show contour score and distance-to-prev
+            try:
+                score = overlay_info.get('score', 0.0)
+                distp = overlay_info.get('distance_to_prev', 0.0)
+                cv2.putText(display_img, f'Score: {score:.1f}  DistPrev: {distp:.1f}', (10, 320),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,180,0), 2)
+            except Exception:
+                pass
         else:
             steering = 0  # No line detected, go straight
 
         # Calculate computation time
         calc_time_ms = (time.time() - start_calc) * 1000
 
-        # Prepare motor command
-        mtr_cmd = np.array([speed, steering])  # Create motor command array: [speed, steering]
+        # Prepare motor command: scale speed down when steering magnitude is high
+        adaptive_speed = float(speed) * (1.0 - SPEED_REDUCTION_FACTOR * abs(steering))
+        # Clamp so we never command trivially small or negative speeds
+        if adaptive_speed < MIN_SPEED:
+            adaptive_speed = MIN_SPEED
+        if adaptive_speed > speed:
+            adaptive_speed = float(speed)
+        mtr_cmd = np.array([adaptive_speed, steering])  # Create motor command array: [speed, steering]
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # Set LED pattern (example)
 
         # Send motor command and attempt to capture a single motor encoder scalar
@@ -375,9 +445,11 @@ try:
         cv2.putText(display_img, f'm/s: {vel_m_s_forward:.3f}', (10, 230),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
-        # Show which source we used for encoder/velocity
-        cv2.putText(display_img, f'Enc source: {enc_source}', (10, 250),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,200,100), 2)
+    # Enc source overlay removed to declutter HUD
+
+        # Show commanded/adaptive speed (magnitude is forward fractional command)
+        cv2.putText(display_img, f'Cmd Speed: {adaptive_speed:.3f}', (10, 295),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,0), 2)
 
         # Cumulative distance (meters) computed from accumulated raw counts
         try:
@@ -401,7 +473,8 @@ try:
         # Send motor command once per loop (safe write)
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # LED pattern
         try:
-            myCar.read_write_std(np.array([speed, steering]), LEDs)
+            # Use adaptive speed when sending the motor command
+            myCar.read_write_std(np.array([adaptive_speed, steering]), LEDs)
         except Exception:
             pass
 
@@ -410,6 +483,3 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
-    
-
-

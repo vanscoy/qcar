@@ -302,6 +302,13 @@ try:
         h, w, _ = img.shape  # Get image dimensions
         display_img = img.copy()  # Show full camera view
 
+        # Draw a yellow rectangle to show the right-crop / lower-half processing area
+        crop_left = int(w * 0.7)
+        crop_top = int(h // 2)
+        crop_right = w - 1
+        crop_bottom = h - 1
+        cv2.rectangle(display_img, (crop_left, crop_top), (crop_right, crop_bottom), (0, 255, 255), 2)
+
         # Update frame counter and FPS
         frame_count += 1
         current_time = time.time()
@@ -313,9 +320,14 @@ try:
         # Draw overlays and frame info
         if overlay_info is not None:
             # Adjust steering target so the red dot is DESIRED_GAP_PIX away from the
-            # detected centroid. This effectively shifts the desired centroid
-            # position to (target_offset - DESIRED_GAP_PIX).
-            effective_target_offset = int(target_offset) - int(DESIRED_GAP_PIX)
+            # detected centroid. Positive DESIRED_GAP_PIX will move the red target
+            # to the RIGHT of the detected centroid in right-crop coordinates
+            # (intuitive mapping). The controller will drive the centroid toward
+            # this effective pixel location inside the right-crop.
+            # Note: previous code used (target_offset - DESIRED_GAP_PIX) which made
+            # the sign unintuitive; we now compute an effective target by adding
+            # the desired gap to the nominal target offset.
+            effective_target_offset = int(target_offset) + int(DESIRED_GAP_PIX)
             # raw pixel error (include steering trim)
             error = effective_target_offset - overlay_info['offset'] - int(STEERING_TRIM_PIX)
 
@@ -342,16 +354,18 @@ try:
             h, w, _ = display_img.shape
             # centroid_full is available in overlay_info['centroid'] (full-image coords)
             cx_full, cy_full = overlay_info['centroid']
-            # Compute the controller's effective image-space target. We shift the
-            # configured `target_offset` by `DESIRED_GAP_PIX` earlier into
-            # `effective_target_offset` so steering drives the centroid toward that
-            # effective pixel. Draw the stationary red target at that effective
-            # target (in full-image coordinates) so visuals match control.
+            # Compute the controller's effective image-space target. Instead of
+            # placing the red target near the right edge, place it at the full
+            # image center X so the controller aims to keep the line at a fixed
+            # lateral offset from the vehicle center. We still add
+            # DESIRED_GAP_PIX to allow a small rightward offset if requested.
+            full_center_x = int(w / 2)
+            # Apply desired gap (positive => red target moves right)
+            red_x_full = full_center_x + int(DESIRED_GAP_PIX)
+            # Convert to right-crop coordinates for computing steering error
             right_crop_left = int(w * 0.7)
-            # effective_target_offset is in right-crop coordinates; convert to
-            # full-image coords for drawing
-            target_x_in_right_crop = int(effective_target_offset)
-            red_x = right_crop_left + target_x_in_right_crop
+            target_x_in_right_crop = int(red_x_full - right_crop_left)
+            red_x = red_x_full
             # clamp to image bounds
             if red_x < 0:
                 red_x = 0
@@ -477,9 +491,7 @@ try:
         cv2.putText(display_img, f'Angle: {angle:.1f} deg', (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,128,255), 2)
 
-        # HUD: show steering tuning state
-        cv2.putText(display_img, f'Trim: {STEERING_TRIM_PIX} px  Deadz: {PIXEL_DEADZONE}  Freeze: {STEERING_FREEZE}', (10, 140),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 2)
+        # HUD: steering tuning state removed from display (kept in code for runtime keys)
 
         # Encoder display (single forward/combined encoder)
         # The hardware exposes a single scalar encoder-like value that appears to

@@ -46,6 +46,8 @@ last_time = time.time()
 prev_enc_count = None
 prev_enc_time = time.time()
 enc_rate = 0.0
+# Cumulative encoder counts observed since script start (raw units)
+cumulative_counts = 0
 
 # Encoder / wheel constants (QCar E8T-720-125): 720 counts per rev (single-ended)
 # Quadrature mode = 4x -> 2880 counts/rev. Adjust if your setup differs.
@@ -320,7 +322,10 @@ try:
                 if dt <= 0:
                     enc_rate = 0.0
                 else:
-                    enc_rate = (motor_enc - prev_enc_count) / dt
+                    delta_counts = motor_enc - prev_enc_count
+                    enc_rate = (delta_counts) / dt
+                    # accumulate raw counts (can be negative when reversing)
+                    cumulative_counts += delta_counts
                 prev_enc_count = motor_enc
                 prev_enc_time = now_t
         else:
@@ -374,6 +379,15 @@ try:
         cv2.putText(display_img, f'Enc source: {enc_source}', (10, 250),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,200,100), 2)
 
+        # Cumulative distance (meters) computed from accumulated raw counts
+        try:
+            revs_total = cumulative_counts / float(ENC_COUNTS_PER_REV) if ENC_COUNTS_PER_REV != 0 else 0.0
+            dist_m = revs_total * (2.0 * np.pi * WHEEL_RADIUS_M)
+        except Exception:
+            dist_m = 0.0
+        cv2.putText(display_img, f'Distance: {dist_m:.3f} m', (10, 270),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+
         # Resize window for larger display
         cv2.namedWindow('Right Camera View', cv2.WINDOW_NORMAL)
         cv2.resizeWindow('Right Camera View', 1280, 960)
@@ -396,3 +410,6 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+    
+
+

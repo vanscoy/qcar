@@ -38,7 +38,7 @@ target_offset = 50
 # line runs parallel to the robot.
 DESIRED_GAP_PIX = 40
 # Forward speed of the robot (lower value for slower movement)
-speed = 0.075
+speed = 0.08
 steering_gain = 0.005  # Gain used for steering calculation
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # Adaptive speed tuning: when steering is large (close to ±1) reduce forward speed
@@ -46,7 +46,7 @@ max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # will be scaled in proportion to (1 - SPEED_REDUCTION_FACTOR * |steering|)
 # and clamped to [MIN_SPEED, speed].
 # Minimum commanded forward speed (do not go below this to overcome static friction)
-MIN_SPEED = 0.07
+MIN_SPEED = 0.075
 # Fraction of speed to remove at maximum steering magnitude (0..1)
 SPEED_REDUCTION_FACTOR = 0.75
 

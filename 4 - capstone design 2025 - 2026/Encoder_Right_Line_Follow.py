@@ -69,6 +69,13 @@ prev_line_centroid = None  # (x,y) in right-crop coordinates from previous frame
 TRACK_DIST_SCALE = 50.0
 MIN_CONTOUR_AREA = 100  # ignore tiny contours
 
+# Steering tuning: trim, deadzone (pixels), and smoothing
+STEERING_TRIM_PIX = 0           # pixels to add/subtract from error to zero the steering
+PIXEL_DEADZONE = 4              # ignore small pixel errors within this radius
+STEERING_SMOOTH_ALPHA = 0.35    # EMA alpha: new * alpha + prev * (1-alpha)
+prev_steering = 0.0
+STEERING_FREEZE = False         # if True, command steering=0 (useful to test mechanical centering)
+
 # Encoder / wheel constants (QCar E8T-720-125): 720 counts per rev (single-ended)
 # Quadrature mode = 4x -> 2880 counts/rev. Adjust if your setup differs.
 ENC_COUNTS_PER_REV = 30584  # measured by motor-driven calibration (raw units from read_write_std)
@@ -309,8 +316,25 @@ try:
             # detected centroid. This effectively shifts the desired centroid
             # position to (target_offset - DESIRED_GAP_PIX).
             effective_target_offset = int(target_offset) - int(DESIRED_GAP_PIX)
-            error = effective_target_offset - overlay_info['offset']  # Calculate error from desired offset
-            steering = np.clip(error * steering_gain, -1, 1)  # Reduced gain for smoother turns
+            # raw pixel error (include steering trim)
+            error = effective_target_offset - overlay_info['offset'] - int(STEERING_TRIM_PIX)
+
+            # deadzone
+            if abs(error) <= PIXEL_DEADZONE:
+                raw_steering = 0.0
+            else:
+                raw_steering = error * steering_gain
+
+            # clamp before smoothing
+            raw_steering = float(np.clip(raw_steering, -1.0, 1.0))
+
+            # freeze steering if requested (helps test mechanical centering)
+            if STEERING_FREEZE:
+                steering = 0.0
+            else:
+                # EMA smoothing
+                steering = STEERING_SMOOTH_ALPHA * raw_steering + (1.0 - STEERING_SMOOTH_ALPHA) * prev_steering
+                prev_steering = steering
             # Draw overlays on full image
             cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
             cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
@@ -453,6 +477,10 @@ try:
         cv2.putText(display_img, f'Angle: {angle:.1f} deg', (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,128,255), 2)
 
+        # HUD: show steering tuning state
+        cv2.putText(display_img, f'Trim: {STEERING_TRIM_PIX} px  Deadz: {PIXEL_DEADZONE}  Freeze: {STEERING_FREEZE}', (10, 140),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180,180,180), 2)
+
         # Encoder display (single forward/combined encoder)
         # The hardware exposes a single scalar encoder-like value that appears to
         # represent net forward rotation (combined/aggregate). We label it as
@@ -478,7 +506,7 @@ try:
         cv2.putText(display_img, f'm/s: {vel_m_s_forward:.3f}', (10, 230),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
-    # Enc source overlay removed to declutter HUD
+        # Enc source overlay removed to declutter HUD
 
         # Show commanded/adaptive speed (magnitude is forward fractional command)
         cv2.putText(display_img, f'Cmd Speed: {adaptive_speed:.3f}', (10, 295),

@@ -36,7 +36,7 @@ target_offset = 50
 # Positive moves the red dot to the right of the detected centroid in the
 # right-crop coordinate system. Tune this to reduce continuous turning when the
 # line runs parallel to the robot.
-DESIRED_GAP_PIX = 80
+DESIRED_GAP_PIX = 40
 # Forward speed of the robot (lower value for slower movement)
 speed = 0.075
 steering_gain = 0.005  # Gain used for steering calculation
@@ -319,15 +319,14 @@ try:
 
         # Draw overlays and frame info
         if overlay_info is not None:
-            # Adjust steering target so the red dot is DESIRED_GAP_PIX away from the
-            # detected centroid. Positive DESIRED_GAP_PIX will move the red target
-            # to the RIGHT of the detected centroid in right-crop coordinates
-            # (intuitive mapping). The controller will drive the centroid toward
-            # this effective pixel location inside the right-crop.
-            # Note: previous code used (target_offset - DESIRED_GAP_PIX) which made
-            # the sign unintuitive; we now compute an effective target by adding
-            # the desired gap to the nominal target offset.
-            effective_target_offset = int(target_offset) + int(DESIRED_GAP_PIX)
+            # Compute controller target in right-crop coordinates.
+            # Use the full-image center X plus DESIRED_GAP_PIX (red target X in full coords),
+            # then convert that X into right-crop coordinates for steering error.
+            right_crop_left = int(w * 0.2)
+            full_center_x = int(w / 2)
+            red_x_full = full_center_x + int(DESIRED_GAP_PIX)
+            # effective target offset in right-crop coords (where overlay_info['offset'] is measured)
+            effective_target_offset = int(red_x_full - right_crop_left)
             # raw pixel error (include steering trim)
             error = effective_target_offset - overlay_info['offset'] - int(STEERING_TRIM_PIX)
 

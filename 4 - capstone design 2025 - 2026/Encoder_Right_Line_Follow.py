@@ -36,6 +36,8 @@ target_offset = 50
 speed = 0.075
 steering_gain = 0.005  # Gain used for steering calculation
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
+# Runtime steering invert toggle: when True steering is multiplied by -1 before sending
+steering_invert = False
 
 # Frame counter and FPS calculation
 frame_count = 0
@@ -259,6 +261,7 @@ try:
         if overlay_info is not None:
             error = target_offset - overlay_info['offset']  # Calculate error from desired offset
             steering = float(np.clip(error * steering_gain, -0.5, 0.5))  # Hardware-safe clamp
+        
             # Draw overlays on full image
             cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
             cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
@@ -273,8 +276,9 @@ try:
         # Calculate computation time
         calc_time_ms = (time.time() - start_calc) * 1000
 
-        # Prepare motor command
-        mtr_cmd = np.array([speed, steering])  # Create motor command array: [speed, steering]
+        # Prepare motor command (apply runtime invert if enabled)
+        steering_cmd = -steering if steering_invert else steering
+        mtr_cmd = np.array([speed, steering_cmd])  # Create motor command array: [speed, steering]
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # Set LED pattern (example)
 
         # Send motor command and attempt to capture a single motor encoder scalar
@@ -387,11 +391,15 @@ try:
         if key == 27:
             print("Kill switch activated: ESC pressed.")  # Print message if ESC is pressed
             break  # Exit control loop
+        # Toggle steering invert with 'i'
+        if key == ord('i'):
+            steering_invert = not steering_invert
+            print(f"Steering invert toggled: {steering_invert}")
 
         # Send motor command once per loop (safe write)
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # LED pattern
         try:
-            myCar.read_write_std(np.array([speed, steering]), LEDs)
+            myCar.read_write_std(mtr_cmd, LEDs)
         except Exception:
             pass
 

@@ -199,9 +199,9 @@ def read_encoders(car):
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    # Crop lower half and right 30% of the image for line detection
+    # Crop lower half and right 50% of the image for line detection
     lower_half = image[h//2:h, :]  # Only lower half
-    right_crop = lower_half[:, int(w*0.7):w]  # Crop right 30% of lower half
+    right_crop = lower_half[:, int(w*0.5):w]  # Crop right 50% of lower half
     gray = cv2.cvtColor(right_crop, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
@@ -213,8 +213,8 @@ def get_right_line_offset(image):
             cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour (in right_crop)
             cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour (in right_crop)
             # Prepare overlay info for full image
-            contour_full = largest + np.array([int(w*0.7), h//2])
-            centroid_full = (int(w*0.7)+cx, h//2+cy)
+            contour_full = largest + np.array([int(w*0.5), h//2])
+            centroid_full = (int(w*0.5)+cx, h//2+cy)
             overlay_info = {
                 'contour': contour_full,
                 'centroid': centroid_full,
@@ -246,6 +246,15 @@ try:
             frame_count = 0
             last_time = current_time
 
+        # Draw processing-area outline (lower half, right 50% of image)
+        # crop_x is the left edge (in full-image coords) of the right-crop used for processing
+        crop_x = int(w * 0.5)
+        crop_y = h // 2
+        crop_w = w - crop_x
+        crop_h = h - crop_y
+        # draw a thin yellow rectangle showing the processing region
+        cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
+
         # Draw overlays and frame info
         if overlay_info is not None:
             error = target_offset - overlay_info['offset']  # Calculate error from desired offset
@@ -255,7 +264,7 @@ try:
             cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
             # Draw target position as red dot
             h, w, _ = display_img.shape
-            target_x = int(w * 0.7) + target_offset
+            target_x = int(w * 0.5) + target_offset
             target_y = h // 2 + (h // 4)  # Middle of cropped lower half
             cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
         else:

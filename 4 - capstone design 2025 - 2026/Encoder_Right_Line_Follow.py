@@ -255,17 +255,17 @@ try:
         crop_h = h - crop_y
         # draw a thin yellow rectangle showing the processing region
         cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
-    # visual debug: draw left (red) and right (green) vertical guide lines and a label
-    cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)
-    cv2.line(display_img, (crop_x + crop_w - 1, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0,255,0), 2)
-    cv2.putText(display_img, f'Crop x:{crop_x} w:{crop_w}', (crop_x + 8, crop_y + 22),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+        # visual debug: draw left (red) and right (green) vertical guide lines and a label
+        cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)
+        cv2.line(display_img, (crop_x + crop_w - 1, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0,255,0), 2)
+        cv2.putText(display_img, f'Crop x:{crop_x} w:{crop_w}', (crop_x + 8, crop_y + 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
 
         # Draw overlays and frame info
         if overlay_info is not None:
             error = target_offset - overlay_info['offset']  # Calculate error from desired offset
             steering = float(np.clip(error * steering_gain, -0.5, 0.5))  # Hardware-safe clamp
-        
+
             # Draw overlays on full image
             cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
             cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot

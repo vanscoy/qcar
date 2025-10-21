@@ -274,31 +274,18 @@ try:
         enc_source = 'none'
         now_t = time.time()
         try:
+            # We expect the encoder counts as a scalar in ret[2]. Read that directly.
             ret = myCar.read_write_std(mtr_cmd, LEDs)
             # Typical return: (current, batteryVoltage, encoderCounts)
             if isinstance(ret, (list, tuple)) and len(ret) >= 3:
                 enc_ret = ret[2]
-                if isinstance(enc_ret, (list, tuple, np.ndarray)):
-                    if len(enc_ret) >= 1:
-                        try:
-                            motor_enc = int(enc_ret[0])
-                            enc_source = 'read_write_std[2][0]'
-                        except Exception:
-                            motor_enc = None
-                else:
-                    try:
-                        motor_enc = int(enc_ret)
-                        enc_source = 'read_write_std[2] (scalar)'
-                    except Exception:
-                        motor_enc = None
-            # If no counts found but fallback enabled, consider ret[0] as velocity (rev/s)
-            if motor_enc is None and FALLBACK_RET0_AS_RPS and isinstance(ret, (list, tuple)) and len(ret) >= 1:
                 try:
-                    rps = float(ret[0])
-                    hw_counts_per_s = rps * ENC_COUNTS_PER_REV
-                    enc_source = 'read_write_std[0] (assumed rps)'
+                    motor_enc = int(enc_ret)
+                    enc_source = 'read_write_std[2] (scalar)'
                 except Exception:
-                    pass
+                    motor_enc = None
+            else:
+                motor_enc = None
         except Exception:
             motor_enc = None
 
@@ -330,15 +317,8 @@ try:
                 prev_enc_count = motor_enc
                 prev_enc_time = now_t
         else:
-            # fallback to read_encoders() first channel if available
-            e = read_encoders(myCar)
-            if e is not None:
-                try:
-                    if isinstance(e, (list, tuple, np.ndarray)) and len(e) >= 1:
-                        motor_enc = int(e[0])
-                        enc_source = 'read_encoders()'
-                except Exception:
-                    motor_enc = None
+            # No encoder counts available from read_write_std; leave motor_enc=None.
+            pass
 
         # Put frame count, FPS, and computation time on image
         cv2.putText(display_img, f'Frames: {frame_count}  FPS: {fps}', (10, 30),
@@ -361,7 +341,7 @@ try:
 
         # Determine counts/s: prefer hardware velocity if available, otherwise derived enc_rate
         counts_per_s = float(hw_counts_per_s) if hw_counts_per_s is not None else float(enc_rate if enc_rate is not None else 0.0)
-        cv2.putText(display_img, f'Counts/s Forward: {counts_per_s:.1f}', (10, 170),
+        cv2.putText(display_img, f'EncCounts/s: {counts_per_s:.1f}', (10, 170),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
         # Conversions: counts/s -> RPM, rad/s, m/s (forward/combined)
@@ -377,8 +357,8 @@ try:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
         # Show which source we used for encoder/velocity
-        cv2.putText(display_img, f'Enc source: {enc_source}', (10, 250),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,200,100), 2)
+        #cv2.putText(display_img, f'Enc source: {enc_source}', (10, 250),
+        #            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,200,100), 2)
 
         # Cumulative distance (meters) computed from accumulated raw counts
         try:
@@ -386,7 +366,7 @@ try:
             dist_m = revs_total * (2.0 * np.pi * WHEEL_RADIUS_M)
         except Exception:
             dist_m = 0.0
-        cv2.putText(display_img, f'Distance: {dist_m:.3f} m', (10, 270),
+        cv2.putText(display_img, f'Distance: {dist_m:.3f} m', (10, 250),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
 
         # Resize window for larger display

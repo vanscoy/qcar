@@ -268,9 +268,20 @@ try:
             h, w, _ = display_img.shape
             target_x = int(w * 0.5) + target_offset
 
-            # Calculate error as (target_x - centroid_x). Positive => centroid left of target.
-            error = target_x - overlay_info['offset']
-            steering = float(np.clip(error * steering_gain, -0.5, 0.5))  # Hardware-safe clamp
+            # Calculate vertical alignment error: we want the contour's Y to match the red target's Y
+            # target_y is defined as the center of the cropped lower-half (visual target)
+            centroid_x, centroid_y = overlay_info['centroid']
+            target_y = h // 2 + (h // 4)
+            dy = int(centroid_y) - int(target_y)
+
+            # If the centroid Y is more than 10 pixels away from the target Y, steer to correct it.
+            # Image Y grows downwards: dy > 0 => centroid is below/red is above => turn right per user request.
+            if abs(dy) > 10:
+                steering = float(np.clip(dy * steering_gain, -0.5, 0.5))
+                control_mode = 'Y'  # indicate vertical-control mode on HUD
+            else:
+                steering = 0.0
+                control_mode = 'aligned'
 
             # Draw overlays on full image
             cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
@@ -278,6 +289,13 @@ try:
             # Draw target position as red dot (center X + offset)
             target_y = h // 2 + (h // 4)  # Middle of cropped lower half
             cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
+
+            # Draw vertical-error info on HUD
+            try:
+                cv2.putText(display_img, f'dy: {dy:+d} ctrl:{control_mode}', (10, 270),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,255), 2)
+            except Exception:
+                pass
         else:
             steering = 0  # No line detected, go straight
 

@@ -263,15 +263,20 @@ try:
 
         # Draw overlays and frame info
         if overlay_info is not None:
-            error = target_offset - overlay_info['offset']  # Calculate error from desired offset
+            # Compute on-screen target X (in full-image coords) and convert to crop coords
+            h, w, _ = display_img.shape
+            target_x = int(w * 0.5) + target_offset
+            # crop_x is 0 for our lower-half full-width crop, so target_x in crop coords == target_x
+            target_x_in_crop = target_x
+
+            # Calculate error as (target - centroid_in_crop). Positive => centroid left of target.
+            error = target_x_in_crop - overlay_info['offset']
             steering = float(np.clip(error * steering_gain, -0.5, 0.5))  # Hardware-safe clamp
 
             # Draw overlays on full image
             cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
             cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
             # Draw target position as red dot (center X + offset)
-            h, w, _ = display_img.shape
-            target_x = int(w * 0.5) + target_offset
             target_y = h // 2 + (h // 4)  # Middle of cropped lower half
             cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
         else:

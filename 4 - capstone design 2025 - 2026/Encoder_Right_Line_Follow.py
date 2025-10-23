@@ -201,10 +201,10 @@ def read_encoders(car):
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    # Crop lower half full-width (uncrop left side) for line detection
-    lower_half = image[h//2:h, :]  # Only lower half (full width)
-    right_crop = lower_half[:, :]  # Full-width lower half
-    gray = cv2.cvtColor(right_crop, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
+    # Crop lower half but remove left 20% of image for line detection
+    crop_x = int(w * 0.2)  # remove left 20%
+    lower_half = image[h//2:h, crop_x:]  # lower half with left 20% removed
+    gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
     overlay_info = None
@@ -214,13 +214,14 @@ def get_right_line_offset(image):
         if M['m00'] > 0:  # Prevent division by zero
             cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour (in right_crop)
             cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour (in right_crop)
-            # Prepare overlay info for full image
-            contour_full = largest + np.array([0, h//2])
-            centroid_full = (cx, h//2+cy)
+            # Prepare overlay info in full-image coordinates
+            contour_full = largest + np.array([crop_x, h//2])
+            centroid_full = (crop_x + cx, h//2 + cy)
             overlay_info = {
                 'contour': contour_full,
                 'centroid': centroid_full,
-                'offset': cx
+                # store offset as full-image X so main loop can compare directly to target_x
+                'offset': crop_x + cx
             }
             return overlay_info  # Return overlay info
     return None  # Return None if no line is found
@@ -248,10 +249,10 @@ try:
             frame_count = 0
             last_time = current_time
 
-        # Draw processing-area outline (lower half, full width)
-        crop_x = 0
+        # Draw processing-area outline (lower half, left 20% cropped)
+        crop_x = int(w * 0.2)
         crop_y = h // 2
-        crop_w = w
+        crop_w = w - crop_x
         crop_h = h - crop_y
         # draw a thin yellow rectangle showing the processing region
         cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
@@ -263,14 +264,12 @@ try:
 
         # Draw overlays and frame info
         if overlay_info is not None:
-            # Compute on-screen target X (in full-image coords) and convert to crop coords
+            # Compute on-screen target X (full-image coords)
             h, w, _ = display_img.shape
             target_x = int(w * 0.5) + target_offset
-            # crop_x is 0 for our lower-half full-width crop, so target_x in crop coords == target_x
-            target_x_in_crop = target_x
 
-            # Calculate error as (target - centroid_in_crop). Positive => centroid left of target.
-            error = target_x_in_crop - overlay_info['offset']
+            # Calculate error as (target_x - centroid_x). Positive => centroid left of target.
+            error = target_x - overlay_info['offset']
             steering = float(np.clip(error * steering_gain, -0.5, 0.5))  # Hardware-safe clamp
 
             # Draw overlays on full image

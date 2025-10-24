@@ -61,6 +61,10 @@ last_accepted_centroid = None
 frame_count = 0
 fps = 0
 last_time = time.time()
+# HUD layout constants (top-left column)
+HUD_X = 10
+HUD_Y = 20
+HUD_LINE_H = 24
 
 # ...existing code...
 
@@ -120,22 +124,10 @@ class speedCalc:
         """Return incremental distance (m) since last call and update the
         stored encoder baseline.
         """
-        try:
-            v = self.qCar.read_encoder()
-            if isinstance(v, (list, tuple, np.ndarray)):
-                currentEncoder = int(v[0])
-            else:
-                currentEncoder = int(v)
-        except Exception:
-            return 0.0
-
-        if self.begin_encoder is None:
-            self.begin_encoder = currentEncoder
-            return 0.0
-
-        encoderChange = currentEncoder - self.begin_encoder
-        self.begin_encoder = currentEncoder
-        return (encoderChange / self.counts_per_rev) * (self.wheel_diameter_m * np.pi)
+        currentEncoder = self.qCar.read_encoder()
+		encoderChange = currentEncoder - self.begin_encoder
+		self.begin_encoder = currentEncoder
+		return (encoderChange/31844) * (.066 *np.pi)
 
 # instantiate simplified encoder helper and distance accumulator
 speed_calc = speedCalc(myCar)
@@ -298,10 +290,10 @@ try:
                 except Exception:
                     pass
 
-            # Draw vertical-error info on HUD
+            # Draw vertical-error info on HUD (moved into top-left column)
             try:
-                cv2.putText(display_img, f'dy: {(int(centroid_y)-int(target_y)):+d} ctrl:{control_mode}', (10, 270),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,255), 2)
+                cv2.putText(display_img, f'dy: {(int(centroid_y)-int(target_y)):+d} ctrl:{control_mode}',
+                            (HUD_X, HUD_Y + HUD_LINE_H * 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,255), 2)
             except Exception:
                 pass
         else:
@@ -341,26 +333,26 @@ try:
             speed_m_s = 0.0
             dist_delta = 0.0
 
-        # Put frame count, FPS, and computation time on image
-        cv2.putText(display_img, f'Frames: {frame_count}  FPS: {fps}', (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
-        cv2.putText(display_img, f'Calc Time: {calc_time_ms:.1f} ms', (10, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,255), 2)
-        cv2.putText(display_img, f'Steering: {steering:.3f}  Gain: {steering_gain}', (10, 90),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,0), 2)
+        # Put frame count, FPS, and computation time on image (neatly stacked)
+        cv2.putText(display_img, f'Frames: {frame_count}  FPS: {fps}', (HUD_X, HUD_Y + HUD_LINE_H * 0),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+        cv2.putText(display_img, f'Calc Time: {calc_time_ms:.1f} ms', (HUD_X, HUD_Y + HUD_LINE_H * 1),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+        cv2.putText(display_img, f'Steering: {steering:.3f}  Gain: {steering_gain}', (HUD_X, HUD_Y + HUD_LINE_H * 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
         angle = steering * max_steering_angle
-        cv2.putText(display_img, f'Angle: {angle:.1f} deg', (10, 120),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,128,255), 2)
+        cv2.putText(display_img, f'Angle: {angle:.1f} deg', (HUD_X, HUD_Y + HUD_LINE_H * 3),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,128,255), 2)
 
         # Show applied forward speed on HUD (from dynamic mapping) and encoder speed
         try:
-            cv2.putText(display_img, f'Speed cmd: {dynamic_speed:.3f} m/s  enc_m/s: {speed_m_s:.3f}', (10, 135),
+            cv2.putText(display_img, f'Speed cmd: {dynamic_speed:.3f} m/s  enc_m/s: {speed_m_s:.3f}', (HUD_X, HUD_Y + HUD_LINE_H * 4),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
         except Exception:
             pass
 
         # Cumulative distance (meters) from simplified helper
-        cv2.putText(display_img, f'Distance: {total_distance_m:.3f} m', (10, 250),
+        cv2.putText(display_img, f'Distance: {total_distance_m:.3f} m', (HUD_X, HUD_Y + HUD_LINE_H * 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
 
         # Resize window for larger display
@@ -389,4 +381,5 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+
 

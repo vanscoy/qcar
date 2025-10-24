@@ -124,10 +124,25 @@ class speedCalc:
         """Return incremental distance (m) since last call and update the
         stored encoder baseline.
         """
-        currentEncoder = self.qCar.read_encoder()
-		encoderChange = currentEncoder - self.begin_encoder
-		self.begin_encoder = currentEncoder
-		return (encoderChange/31844) * (.066 *np.pi)
+        try:
+            v = self.qCar.read_encoder()
+            if isinstance(v, (list, tuple, np.ndarray)):
+                currentEncoder = int(v[0])
+            else:
+                currentEncoder = int(v)
+        except Exception:
+            return 0.0
+
+        if self.begin_encoder is None:
+            # Seed baseline on first successful read and return zero distance
+            self.begin_encoder = currentEncoder
+            return 0.0
+
+        encoderChange = currentEncoder - self.begin_encoder
+        self.begin_encoder = currentEncoder
+        # use configured counts_per_rev and wheel_diameter_m for distance
+        dist = (encoderChange / self.counts_per_rev) * (self.wheel_diameter_m * np.pi)
+        return dist
 
 # instantiate simplified encoder helper and distance accumulator
 speed_calc = speedCalc(myCar)
@@ -381,5 +396,3 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
-
-

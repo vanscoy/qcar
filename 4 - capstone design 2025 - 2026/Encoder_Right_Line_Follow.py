@@ -50,7 +50,7 @@ SPEED_KP = 0.00007407
 # last accepted centroid by more than these thresholds it will be considered
 # spurious/incorrect. Both X and Y must be within the thresholds to accept.
 Y_IGNORE_THRESHOLD = 100
-X_IGNORE_THRESHOLD = 50
+X_IGNORE_THRESHOLD = 100
 
 # Last accepted centroid (full-image coords) as (x, y). Initialized to None
 # and set on first valid detection. Used to filter spurious contours (e.g.,
@@ -353,7 +353,7 @@ try:
             target_y = h // 2 + (h // 4) - 15  # Middle of cropped lower half, shifted up 15 px
             cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
 
-            # Draw the purple search rectangle (50x50) centered on the last
+            # Draw the purple search rectangle (100x100) centered on the last
             # accepted centroid so the operator can see where we expect the
             # next valid contour to appear.
             if last_accepted_centroid is not None:

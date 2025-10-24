@@ -207,8 +207,8 @@ try:
         # visual debug: draw left (red) and right (green) vertical guide lines and a label
         cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)
         cv2.line(display_img, (crop_x + crop_w - 1, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0,255,0), 2)
-        cv2.putText(display_img, f'Crop x:{crop_x} w:{crop_w}', (crop_x + 8, crop_y + 22),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+        #cv2.putText(display_img, f'Crop x:{crop_x} w:{crop_w}', (crop_x + 8, crop_y + 22),
+                    #cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
 
         # Draw overlays and frame info
         if overlay_info is not None:
@@ -389,3 +389,4 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+

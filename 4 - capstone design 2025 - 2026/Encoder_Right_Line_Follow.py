@@ -46,13 +46,16 @@ SPEED_MAX = 0.078
 SPEED_MIN = 0.068
 SPEED_KP = 0.00007407
 
-# Y-based contour ignore threshold (pixels). If new detection's Y is farther than
-# this from the last accepted centroid Y, ignore it and continue straight.
+# Contour acceptance thresholds (pixels). If a new detection differs from the
+# last accepted centroid by more than these thresholds it will be considered
+# spurious/incorrect. Both X and Y must be within the thresholds to accept.
 Y_IGNORE_THRESHOLD = 100
+X_IGNORE_THRESHOLD = 50
 
-# Last accepted centroid Y (full-image coords). Initialized to None and set on
-# first valid detection. Used to filter spurious contours (e.g., yellow line at bottom).
-last_detected_centroid_y = None
+# Last accepted centroid (full-image coords) as (x, y). Initialized to None
+# and set on first valid detection. Used to filter spurious contours (e.g.,
+# large yellow lines) and to provide a fallback when ignored contours appear.
+last_accepted_centroid = None
 
 # Frame counter and FPS calculation
 frame_count = 0
@@ -288,13 +291,19 @@ try:
             centroid_x, centroid_y = overlay_info['centroid']
             target_y = h // 2 + (h // 4) - 15
 
-            # Determine whether this detection is close enough (in Y) to the last accepted one.
+            # Determine whether this detection is close enough (in X and Y)
+            # to the last accepted centroid. Both axes must be within the
+            # configured thresholds to be accepted. If we have no previous
+            # accepted centroid, accept the first detection.
             accept_detection = False
-            if last_detected_centroid_y is None:
-                # first detection: accept and seed the last_detected_centroid_y
+            if last_accepted_centroid is None:
+                # first detection: accept and seed the last_accepted_centroid
                 accept_detection = True
             else:
-                if abs(int(centroid_y) - int(last_detected_centroid_y)) <= Y_IGNORE_THRESHOLD:
+                last_x, last_y = last_accepted_centroid
+                dx = abs(int(centroid_x) - int(last_x))
+                dy_from_last = abs(int(centroid_y) - int(last_y))
+                if dx <= X_IGNORE_THRESHOLD and dy_from_last <= Y_IGNORE_THRESHOLD:
                     accept_detection = True
 
             if accept_detection:
@@ -307,8 +316,8 @@ try:
                     steering = 0.0
                     control_mode = 'aligned'
 
-                # update last accepted centroid Y
-                last_detected_centroid_y = int(centroid_y)
+                # update last accepted centroid (x,y)
+                last_accepted_centroid = (int(centroid_x), int(centroid_y))
                 centroid_y_for_speed = int(centroid_y)
                 # draw accepted overlay markers
                 cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
@@ -319,9 +328,9 @@ try:
                 # (blue) centroid Y so the robot will keep attempting to follow
                 # the previously-seen blue line while the spurious/large contour
                 # (e.g. a yellow line) is present in-frame.
-                if last_detected_centroid_y is not None:
-                    # Use previous accepted centroid Y as if it were the current detection
-                    centroid_used_y = int(last_detected_centroid_y)
+                if last_accepted_centroid is not None:
+                    # Use previous accepted centroid (x,y) as if it were the current detection
+                    centroid_used_x, centroid_used_y = last_accepted_centroid
                     dy = int(centroid_used_y) - int(target_y)
                     if abs(dy) > 10:
                         steering = float(np.clip(dy * steering_gain, -0.5, 0.5))
@@ -343,6 +352,21 @@ try:
             # Draw target position as red dot (center X + offset)
             target_y = h // 2 + (h // 4) - 15  # Middle of cropped lower half, shifted up 15 px
             cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
+
+            # Draw the purple search rectangle (50x50) centered on the last
+            # accepted centroid so the operator can see where we expect the
+            # next valid contour to appear.
+            if last_accepted_centroid is not None:
+                lx, ly = last_accepted_centroid
+                half = X_IGNORE_THRESHOLD // 2
+                tl = (max(0, lx - half), max(0, ly - half))
+                br = (min(w - 1, lx + half), min(h - 1, ly + half))
+                cv2.rectangle(display_img, tl, br, (255, 0, 255), 2)  # Purple box
+                try:
+                    cv2.putText(display_img, 'Search', (tl[0] + 2, tl[1] - 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,255), 1)
+                except Exception:
+                    pass
 
             # Draw vertical-error info on HUD
             try:
@@ -506,4 +530,3 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
-

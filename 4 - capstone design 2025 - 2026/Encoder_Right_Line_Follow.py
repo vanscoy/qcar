@@ -314,12 +314,29 @@ try:
                 cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
                 cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
             else:
-                # Ignored detection: do not update last_detected_centroid_y, go straight this cycle
-                steering = 0.0
-                control_mode = 'ignored'
-                # use last accepted centroid for speed computation if available
-                centroid_y_for_speed = int(last_detected_centroid_y) if last_detected_centroid_y is not None else int(centroid_y)
-                # draw ignored overlay markers (yellow)
+                # Ignored detection: do NOT update last_detected_centroid_y.
+                # Instead of forcing steering=0, fall back to the last accepted
+                # (blue) centroid Y so the robot will keep attempting to follow
+                # the previously-seen blue line while the spurious/large contour
+                # (e.g. a yellow line) is present in-frame.
+                if last_detected_centroid_y is not None:
+                    # Use previous accepted centroid Y as if it were the current detection
+                    centroid_used_y = int(last_detected_centroid_y)
+                    dy = int(centroid_used_y) - int(target_y)
+                    if abs(dy) > 10:
+                        steering = float(np.clip(dy * steering_gain, -0.5, 0.5))
+                        control_mode = 'prevY'
+                    else:
+                        steering = 0.0
+                        control_mode = 'aligned_prev'
+                    centroid_y_for_speed = int(centroid_used_y)
+                else:
+                    # No previous accepted centroid available; be conservative and go straight
+                    steering = 0.0
+                    control_mode = 'ignored_no_prev'
+                    centroid_y_for_speed = None
+
+                # draw ignored overlay markers (yellow) to indicate the new detection was ignored
                 cv2.drawContours(display_img, [overlay_info['contour']], -1, (0,255,255), 2)
                 cv2.circle(display_img, overlay_info['centroid'], 8, (0,255,255), -1)
 

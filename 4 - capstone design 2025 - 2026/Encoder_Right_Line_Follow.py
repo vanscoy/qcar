@@ -68,7 +68,7 @@ cumulative_counts = 0
 
 # Encoder / wheel constants (QCar E8T-720-125): 720 counts per rev (single-ended)
 # Quadrature mode = 4x -> 2880 counts/rev. Adjust if your setup differs.
-ENC_COUNTS_PER_REV = 30584  # measured by motor-driven calibration (raw units from read_write_std)
+ENC_COUNTS_PER_REV = 31844  # measured by motor-driven calibration (raw units from read_write_std)
 # Wheel radius in meters (derived from tire diameter). User provided diameter 0.066 m -> radius 0.033 m
 WHEEL_RADIUS_M = 0.066 / 2.0
 

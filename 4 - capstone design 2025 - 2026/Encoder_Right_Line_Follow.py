@@ -46,6 +46,14 @@ SPEED_MIN = 0.06
 # derived earlier: Kp = 0.00011
 SPEED_KP = 0.00011
 
+# Y-based contour ignore threshold (pixels). If new detection's Y is farther than
+# this from the last accepted centroid Y, ignore it and continue straight.
+Y_IGNORE_THRESHOLD = 100
+
+# Last accepted centroid Y (full-image coords). Initialized to None and set on
+# first valid detection. Used to filter spurious contours (e.g., yellow line at bottom).
+last_detected_centroid_y = None
+
 # Frame counter and FPS calculation
 frame_count = 0
 fps = 0
@@ -279,32 +287,55 @@ try:
             # target_y is defined as the center of the cropped lower-half (visual target)
             centroid_x, centroid_y = overlay_info['centroid']
             target_y = h // 2 + (h // 4) - 15
-            dy = int(centroid_y) - int(target_y)
 
-            # If the centroid Y is more than 10 pixels away from the target Y, steer to correct it.
-            # Image Y grows downwards: dy > 0 => centroid is below/red is above => turn right per user request.
-            if abs(dy) > 10:
-                steering = float(np.clip(dy * steering_gain, -0.5, 0.5))
-                control_mode = 'Y'  # indicate vertical-control mode on HUD
+            # Determine whether this detection is close enough (in Y) to the last accepted one.
+            accept_detection = False
+            if last_detected_centroid_y is None:
+                # first detection: accept and seed the last_detected_centroid_y
+                accept_detection = True
             else:
-                steering = 0.0
-                control_mode = 'aligned'
+                if abs(int(centroid_y) - int(last_detected_centroid_y)) <= Y_IGNORE_THRESHOLD:
+                    accept_detection = True
 
-            # Draw overlays on full image
-            cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
-            cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
+            if accept_detection:
+                # compute dy relative to target and steer accordingly
+                dy = int(centroid_y) - int(target_y)
+                if abs(dy) > 10:
+                    steering = float(np.clip(dy * steering_gain, -0.5, 0.5))
+                    control_mode = 'Y'
+                else:
+                    steering = 0.0
+                    control_mode = 'aligned'
+
+                # update last accepted centroid Y
+                last_detected_centroid_y = int(centroid_y)
+                centroid_y_for_speed = int(centroid_y)
+                # draw accepted overlay markers
+                cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
+                cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
+            else:
+                # Ignored detection: do not update last_detected_centroid_y, go straight this cycle
+                steering = 0.0
+                control_mode = 'ignored'
+                # use last accepted centroid for speed computation if available
+                centroid_y_for_speed = int(last_detected_centroid_y) if last_detected_centroid_y is not None else int(centroid_y)
+                # draw ignored overlay markers (yellow)
+                cv2.drawContours(display_img, [overlay_info['contour']], -1, (0,255,255), 2)
+                cv2.circle(display_img, overlay_info['centroid'], 8, (0,255,255), -1)
+
             # Draw target position as red dot (center X + offset)
             target_y = h // 2 + (h // 4) - 15  # Middle of cropped lower half, shifted up 15 px
             cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
 
             # Draw vertical-error info on HUD
             try:
-                cv2.putText(display_img, f'dy: {dy:+d} ctrl:{control_mode}', (10, 270),
+                cv2.putText(display_img, f'dy: {(int(centroid_y)-int(target_y)):+d} ctrl:{control_mode}', (10, 270),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,255), 2)
             except Exception:
                 pass
         else:
             steering = 0  # No line detected, go straight
+            centroid_y_for_speed = None
 
         # Calculate computation time
         calc_time_ms = (time.time() - start_calc) * 1000
@@ -313,15 +344,12 @@ try:
         steering_cmd = -steering if steering_invert else steering
 
         # Dynamic forward speed based on vertical alignment (pixel Y distance)
-        # If we have a detected centroid, compute proportion = abs(target_y - centroid_y) + 1
-        # and apply SPEED_KP so larger vertical error lowers speed down to SPEED_MIN.
-        if overlay_info is not None:
-            _, centroid_y = overlay_info['centroid']
-            # target_y computed earlier in full-image coords
-            prop = abs(target_y - int(centroid_y)) + 1
+        # Use centroid_y_for_speed (set from accepted detection or last accepted) if available
+        if 'centroid_y_for_speed' in locals() and centroid_y_for_speed is not None:
+            prop = abs(target_y - int(centroid_y_for_speed)) + 1
             dynamic_speed = float(np.clip(SPEED_MAX - (SPEED_KP * float(prop)), SPEED_MIN, SPEED_MAX))
         else:
-            # No line detected: be conservative and go at minimum speed
+            # No reliable centroid available: be conservative and go at minimum speed
             dynamic_speed = float(SPEED_MIN)
 
         mtr_cmd = np.array([dynamic_speed, steering_cmd])  # Create motor command array: [speed, steering]

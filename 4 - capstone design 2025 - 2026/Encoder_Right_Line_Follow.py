@@ -62,159 +62,89 @@ frame_count = 0
 fps = 0
 last_time = time.time()
 
-# Encoder tracking (single scalar motor encoder)
-prev_enc_count = None
-prev_enc_time = time.time()
-enc_rate = 0.0
-# Cumulative encoder counts observed since script start (raw units)
-cumulative_counts = 0
-
-# Encoder / wheel constants (QCar E8T-720-125): 720 counts per rev (single-ended)
-# Quadrature mode = 4x -> 2880 counts/rev. Adjust if your setup differs.
-ENC_COUNTS_PER_REV = 31844  # measured by motor-driven calibration (raw units from read_write_std)
-# Wheel radius in meters (derived from tire diameter). User provided diameter 0.066 m -> radius 0.033 m
-WHEEL_RADIUS_M = 0.066 / 2.0
-
 # ...existing code...
 
-def read_encoder_velocity(car):
-    """Try to read hardware-provided encoder velocities (counts/s) from the car.
-    Returns (left_counts_per_s, right_counts_per_s) or None.
+# --- Simplified encoder helper (user-provided, defensive) -------------------
+class speedCalc:
+    """Helper to compute speed (m/s) and distance (m) using a single encoder
+    reading from the QCar. This is defensive: if read_encoder() isn't available
+    it will return zeros instead of raising.
     """
-    # Try QCar-specific read methods/attributes first
-    try:
-        # 1) read_encoder() method (common on some QCar APIs)
-        fn = getattr(car, 'read_encoder', None)
-        if callable(fn):
-            try:
-                v = fn()
-                if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
-                    return float(v[0]), float(v[1])
-                if isinstance(v, dict):
-                    for k in ('encoders', 'encoder_counts', 'encoderCounts', 'velocity'):
-                        if k in v and isinstance(v[k], (list, tuple, np.ndarray)) and len(v[k]) >= 2:
-                            return float(v[k][0]), float(v[k][1])
-            except Exception:
-                pass
+    def __init__(self, qCar, t=None, counts_per_rev=31844, wheel_diameter_m=0.066):
+        self.qCar = qCar
+        self.t = time.time() if t is None else t
+        self.counts_per_rev = float(counts_per_rev)
+        self.wheel_diameter_m = float(wheel_diameter_m)
+        # seed begin_encoder if possible
+        try:
+            v = self.qCar.read_encoder()
+            if isinstance(v, (list, tuple, np.ndarray)):
+                self.begin_encoder = int(v[0])
+            else:
+                self.begin_encoder = int(v)
+        except Exception:
+            self.begin_encoder = None
 
-        # 2) mtr_encoder attribute (some APIs expose this)
-        if hasattr(car, 'mtr_encoder'):
-            v = getattr(car, 'mtr_encoder')
-            if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
-                return float(v[0]), float(v[1])
-            if isinstance(v, dict):
-                for k in ('encoders', 'encoder_counts', 'encoderCounts', 'velocity'):
-                    if k in v and isinstance(v[k], (list, tuple, np.ndarray)) and len(v[k]) >= 2:
-                        return float(v[k][0]), float(v[k][1])
+    def elapsed_time(self):
+        return time.time() - self.t
 
-        # 3) read_std() may return a dict with velocities
-        fn = getattr(car, 'read_std', None)
-        if callable(fn):
-            try:
-                data = fn()
-                if isinstance(data, dict):
-                    for k in ('velocity', 'velocities', 'encoder_velocity', 'encoder_velocities', 'other'):
-                        v = data.get(k) if k in data else None
-                        if v is None:
-                            continue
-                        if isinstance(v, (list, tuple, np.ndarray)) and len(v) >= 2:
-                            return float(v[0]), float(v[1])
-                        if isinstance(v, dict):
-                            for subk in ('encoders','encoder_counts','encoderCounts','velocity'):
-                                if subk in v and isinstance(v[subk], (list, tuple, np.ndarray)) and len(v[subk]) >= 2:
-                                    return float(v[subk][0]), float(v[subk][1])
-            except Exception:
-                pass
-    except Exception:
-        pass
-    # No hardware velocity found
-    return None
+    def encoder_speed(self):
+        """Return speed in m/s measured since last call. Updates internal timer
+        and begin_encoder so consecutive calls return relative speed.
+        """
+        now = time.time()
+        totalTime = now - self.t
+        self.t = now
+        if totalTime <= 0:
+            return 0.0
+        try:
+            v = self.qCar.read_encoder()
+            if isinstance(v, (list, tuple, np.ndarray)):
+                currentEncoder = int(v[0])
+            else:
+                currentEncoder = int(v)
+        except Exception:
+            return 0.0
 
-def read_encoders(car):
-    """Try several common QCar encoder access patterns and return (left, right) counts or None.
-    This function is defensive: it won't raise if the API doesn't expose encoders the same way.
-    """
-    try:
-        # 1) prefer read_encoder() if available
-        fn = getattr(car, 'read_encoder', None)
-        if callable(fn):
-            try:
-                val = fn()
-                # support single-channel encoders (motor encoder only) as well as dual-channel
-                if isinstance(val, (list, tuple, np.ndarray)):
-                    if len(val) >= 2:
-                        return int(val[0]), int(val[1])
-                    if len(val) == 1:
-                        return int(val[0]), None
-                if isinstance(val, dict):
-                    for k in ('encoders', 'encoder_counts', 'encoderCounts', 'mtr_encoder'):
-                        if k in val and isinstance(val[k], (list, tuple, np.ndarray)) and len(val[k]) >= 2:
-                            return int(val[k][0]), int(val[k][1])
-            except Exception:
-                pass
+        if self.begin_encoder is None:
+            self.begin_encoder = currentEncoder
+            return 0.0
 
-        # 2) attribute mtr_encoder (common on this QCar API)
-        if hasattr(car, 'mtr_encoder'):
-            val = getattr(car, 'mtr_encoder')
-            if isinstance(val, (list, tuple, np.ndarray)):
-                if len(val) >= 2:
-                    return int(val[0]), int(val[1])
-                if len(val) == 1:
-                    return int(val[0]), None
-            if isinstance(val, dict):
-                for k in ('encoders', 'encoder_counts', 'encoderCounts'):
-                    if k in val and isinstance(val[k], (list, tuple, np.ndarray)) and len(val[k]) >= 2:
-                        return int(val[k][0]), int(val[k][1])
+        encoderChange = currentEncoder - self.begin_encoder
+        self.begin_encoder = currentEncoder
+        # distance per count = (pi * diameter) / counts_per_rev
+        dist = (encoderChange / self.counts_per_rev) * (self.wheel_diameter_m * np.pi)
+        return dist / totalTime
 
-        # 3) try read_std() which often returns a data dict
-        fn = getattr(car, 'read_std', None)
-        if callable(fn):
-            try:
-                data = fn()
-                if isinstance(data, dict):
-                    for k in ('encoders', 'encoder_counts', 'encoderCounts', 'mtr_encoder'):
-                        if k in data and isinstance(data[k], (list, tuple, np.ndarray)):
-                            if len(data[k]) >= 2:
-                                return int(data[k][0]), int(data[k][1])
-                            if len(data[k]) == 1:
-                                return int(data[k][0]), None
-            except Exception:
-                pass
+    def encoder_dist(self):
+        """Return incremental distance (m) since last call and update the
+        stored encoder baseline.
+        """
+        try:
+            v = self.qCar.read_encoder()
+            if isinstance(v, (list, tuple, np.ndarray)):
+                currentEncoder = int(v[0])
+            else:
+                currentEncoder = int(v)
+        except Exception:
+            return 0.0
 
-        # 4) fallback: try several common method/attr names
-        for name in ('get_encoders', 'read_encoders', 'getEncoderCounts', 'readEncoderCounts'):
-            fn = getattr(car, name, None)
-            if callable(fn):
-                try:
-                    val = fn()
-                except Exception:
-                    val = None
-                if val is None:
-                    continue
-                if isinstance(val, (list, tuple, np.ndarray)) and len(val) >= 2:
-                    return int(val[0]), int(val[1])
+        if self.begin_encoder is None:
+            self.begin_encoder = currentEncoder
+            return 0.0
 
-        for name in ('encoder_counts', 'encoders', 'encoderCounts'):
-            val = getattr(car, name, None)
-            if val is None:
-                continue
-            if isinstance(val, (list, tuple, np.ndarray)) and len(val) >= 2:
-                return int(val[0]), int(val[1])
+        encoderChange = currentEncoder - self.begin_encoder
+        self.begin_encoder = currentEncoder
+        return (encoderChange / self.counts_per_rev) * (self.wheel_diameter_m * np.pi)
 
-        # 5) as a last resort, some APIs return a dict from read_std() or similar
-        if hasattr(car, 'read_std') and callable(getattr(car, 'read_std')):
-            try:
-                data = car.read_std()
-                if isinstance(data, dict):
-                    for k in ('encoders', 'encoder_counts', 'encoderCounts'):
-                        if k in data and isinstance(data[k], (list, tuple, np.ndarray)) and len(data[k]) >= 2:
-                            return int(data[k][0]), int(data[k][1])
-            except Exception:
-                pass
-    except Exception:
-        # be conservative: never let encoder probing crash the main loop
-        return None
-    return None
+# instantiate simplified encoder helper and distance accumulator
+speed_calc = speedCalc(myCar)
+total_distance_m = 0.0
+
+
+# Note: removed low-level encoder probing helpers to keep runtime simple.
+# If you need advanced probing later, reintroduce a minimal helper that
+# calls myCar.read_encoder() or parses read_write_std() returns.
 
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
@@ -396,57 +326,20 @@ try:
         mtr_cmd = np.array([dynamic_speed, steering_cmd])  # Create motor command array: [speed, steering]
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # Set LED pattern (example)
 
-        # Send motor command and attempt to capture a single motor encoder scalar
-        motor_enc = None
-        hw_counts_per_s = None
-        enc_source = 'none'
-        now_t = time.time()
+        # Send motor command (don't attempt complex encoder probing here)
         try:
-            # We expect the encoder counts as a scalar in ret[2]. Read that directly.
-            ret = myCar.read_write_std(mtr_cmd, LEDs)
-            # Typical return: (current, batteryVoltage, encoderCounts)
-            if isinstance(ret, (list, tuple)) and len(ret) >= 3:
-                enc_ret = ret[2]
-                try:
-                    motor_enc = int(enc_ret)
-                    enc_source = 'read_write_std[2] (scalar)'
-                except Exception:
-                    motor_enc = None
-            else:
-                motor_enc = None
+            myCar.read_write_std(mtr_cmd, LEDs)
         except Exception:
-            motor_enc = None
-
-        # If hardware-provided velocity is available via other methods, prefer first channel
-        vel_try = read_encoder_velocity(myCar)
-        if vel_try is not None:
-            try:
-                hw_counts_per_s = float(vel_try[0]) if isinstance(vel_try, (list, tuple, np.ndarray)) else float(vel_try)
-                enc_source = 'read_encoder() or read_std() velocities'
-            except Exception:
-                pass
-
-        # Compute encoder rate from counts if we have motor_enc
-        if motor_enc is not None:
-            if prev_enc_count is None:
-                prev_enc_count = motor_enc
-                prev_enc_time = now_t
-                enc_rate = 0.0
-            else:
-                dt = now_t - prev_enc_time
-                if dt <= 0:
-                    enc_rate = 0.0
-                else:
-                    enc_rate = (motor_enc - prev_enc_count) / dt
-                    delta_counts = motor_enc - prev_enc_count
-                    enc_rate = (delta_counts) / dt
-                    # accumulate raw counts (can be negative when reversing)
-                    cumulative_counts += delta_counts
-                prev_enc_count = motor_enc
-                prev_enc_time = now_t
-        else:
-            # No encoder counts available from read_write_std; leave motor_enc=None.
             pass
+
+        # Use simplified encoder helper for speed (m/s) and incremental distance (m)
+        try:
+            speed_m_s = speed_calc.encoder_speed()
+            dist_delta = speed_calc.encoder_dist()
+            total_distance_m += dist_delta
+        except Exception:
+            speed_m_s = 0.0
+            dist_delta = 0.0
 
         # Put frame count, FPS, and computation time on image
         cv2.putText(display_img, f'Frames: {frame_count}  FPS: {fps}', (10, 30),
@@ -459,49 +352,15 @@ try:
         cv2.putText(display_img, f'Angle: {angle:.1f} deg', (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,128,255), 2)
 
-        # Show applied forward speed on HUD
+        # Show applied forward speed on HUD (from dynamic mapping) and encoder speed
         try:
-            cv2.putText(display_img, f'Speed: {dynamic_speed:.3f} m/s', (10, 135),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
+            cv2.putText(display_img, f'Speed cmd: {dynamic_speed:.3f} m/s  enc_m/s: {speed_m_s:.3f}', (10, 135),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
         except Exception:
             pass
 
-        # Encoder display (single forward/combined encoder)
-        # The hardware exposes a single scalar encoder-like value that appears to
-        # represent net forward rotation (combined/aggregate). We label it as
-        # 'ForwardEnc (combined)' to reduce confusion.
-        forward_cnt = motor_enc if motor_enc is not None else 0
-        cv2.putText(display_img, f'ForwardEnc (combined): {forward_cnt}', (10, 150),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
-
-        # Determine counts/s: prefer hardware velocity if available, otherwise derived enc_rate
-        counts_per_s = float(hw_counts_per_s) if hw_counts_per_s is not None else float(enc_rate if enc_rate is not None else 0.0)
-        cv2.putText(display_img, f'EncCounts/s: {counts_per_s:.1f}', (10, 170),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-
-        # Conversions: counts/s -> RPM, rad/s, m/s (forward/combined)
-        rpm_forward = (counts_per_s / ENC_COUNTS_PER_REV) * 60.0
-        rad_s_forward = (counts_per_s / ENC_COUNTS_PER_REV) * 2.0 * np.pi
-        vel_m_s_forward = rad_s_forward * WHEEL_RADIUS_M
-
-        cv2.putText(display_img, f'RPM: {rpm_forward:.1f}', (10, 190),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-        cv2.putText(display_img, f'Rad/s: {rad_s_forward:.2f}', (10, 210),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-        cv2.putText(display_img, f'm/s: {vel_m_s_forward:.3f}', (10, 230),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-
-        # Show which source we used for encoder/velocity
-        #cv2.putText(display_img, f'Enc source: {enc_source}', (10, 250),
-        #            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,200,100), 2)
-
-        # Cumulative distance (meters) computed from accumulated raw counts
-        try:
-            revs_total = cumulative_counts / float(ENC_COUNTS_PER_REV) if ENC_COUNTS_PER_REV != 0 else 0.0
-            dist_m = revs_total * (2.0 * np.pi * WHEEL_RADIUS_M)
-        except Exception:
-            dist_m = 0.0
-        cv2.putText(display_img, f'Distance: {dist_m:.3f} m', (10, 250),
+        # Cumulative distance (meters) from simplified helper
+        cv2.putText(display_img, f'Distance: {total_distance_m:.3f} m', (10, 250),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
 
         # Resize window for larger display

@@ -38,6 +38,13 @@ steering_gain = 0.005  # Gain used for steering calculation
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # Runtime steering invert toggle: when True steering is multiplied by -1 before sending
 steering_invert = False
+# Speed control constants for gain-based slowing during large turns
+# max forward speed and a safe minimum to avoid stalling
+SPEED_MAX = 0.075
+SPEED_MIN = 0.06
+# Kp such that SPEED = SPEED_MAX - Kp * (abs(diff)+1)
+# derived earlier: Kp = 0.00011
+SPEED_KP = 0.00011
 
 # Frame counter and FPS calculation
 frame_count = 0
@@ -271,7 +278,7 @@ try:
             # Calculate vertical alignment error: we want the contour's Y to match the red target's Y
             # target_y is defined as the center of the cropped lower-half (visual target)
             centroid_x, centroid_y = overlay_info['centroid']
-            target_y = h // 2 + (h // 4)
+            target_y = h // 2 + (h // 4) - 15
             dy = int(centroid_y) - int(target_y)
 
             # If the centroid Y is more than 10 pixels away from the target Y, steer to correct it.
@@ -287,7 +294,7 @@ try:
             cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
             cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)  # Blue centroid dot
             # Draw target position as red dot (center X + offset)
-            target_y = h // 2 + (h // 4)  # Middle of cropped lower half
+            target_y = h // 2 + (h // 4) - 15  # Middle of cropped lower half, shifted up 15 px
             cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
 
             # Draw vertical-error info on HUD
@@ -304,7 +311,20 @@ try:
 
         # Prepare motor command (apply runtime invert if enabled)
         steering_cmd = -steering if steering_invert else steering
-        mtr_cmd = np.array([speed, steering_cmd])  # Create motor command array: [speed, steering]
+
+        # Dynamic forward speed based on vertical alignment (pixel Y distance)
+        # If we have a detected centroid, compute proportion = abs(target_y - centroid_y) + 1
+        # and apply SPEED_KP so larger vertical error lowers speed down to SPEED_MIN.
+        if overlay_info is not None:
+            _, centroid_y = overlay_info['centroid']
+            # target_y computed earlier in full-image coords
+            prop = abs(target_y - int(centroid_y)) + 1
+            dynamic_speed = float(np.clip(SPEED_MAX - (SPEED_KP * float(prop)), SPEED_MIN, SPEED_MAX))
+        else:
+            # No line detected: be conservative and go at minimum speed
+            dynamic_speed = float(SPEED_MIN)
+
+        mtr_cmd = np.array([dynamic_speed, steering_cmd])  # Create motor command array: [speed, steering]
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])  # Set LED pattern (example)
 
         # Send motor command and attempt to capture a single motor encoder scalar
@@ -369,6 +389,13 @@ try:
         angle = steering * max_steering_angle
         cv2.putText(display_img, f'Angle: {angle:.1f} deg', (10, 120),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,128,255), 2)
+
+        # Show applied forward speed on HUD
+        try:
+            cv2.putText(display_img, f'Speed: {dynamic_speed:.3f} m/s', (10, 135),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,200), 2)
+        except Exception:
+            pass
 
         # Encoder display (single forward/combined encoder)
         # The hardware exposes a single scalar encoder-like value that appears to

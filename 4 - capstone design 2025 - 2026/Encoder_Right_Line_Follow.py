@@ -39,12 +39,12 @@ max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # Runtime steering invert toggle: when True steering is multiplied by -1 before sending
 steering_invert = False
 # Speed control constants for gain-based slowing during large turns
-# max forward speed and a safe minimum to avoid stalling
-SPEED_MAX = 0.075
-SPEED_MIN = 0.06
-# Kp such that SPEED = SPEED_MAX - Kp * (abs(diff)+1)
-# derived earlier: Kp = 0.00011
-SPEED_KP = 0.00011
+# Updated per user: increase min speed to avoid stalling and bump max speed
+# New values: SPEED_MIN = 0.068, SPEED_MAX = 0.078
+# Kp chosen so that 0.068 = 0.078 - Kp * (135) -> Kp ~= 0.00007407
+SPEED_MAX = 0.078
+SPEED_MIN = 0.068
+SPEED_KP = 0.00007407
 
 # Y-based contour ignore threshold (pixels). If new detection's Y is farther than
 # this from the last accepted centroid Y, ignore it and continue straight.
@@ -489,3 +489,4 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     rightCam.terminate()  # Terminate camera connection
+

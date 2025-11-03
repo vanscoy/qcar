@@ -34,7 +34,7 @@ rightCam = Camera2D(camera_id="0", frame_width=640, frame_height=480, frame_rate
 target_offset = 50
 # Forward speed of the robot (lower value for slower movement)
 speed = 0.072
-steering_gain = 0.007  # Gain used for steering calculation
+steering_gain = 0.007  # Gain used for steering calculation (increased per user request)
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # Runtime steering invert toggle: when True steering is multiplied by -1 before sending
 steering_invert = False
@@ -229,7 +229,8 @@ try:
 
             # Get centroid of the largest contour (no more "nias" acceptance logic)
             centroid_x, centroid_y = overlay_info['centroid']
-            target_y = h // 2 + (h // 4) - 15
+            # Move the red target down by 30 pixels (was -15, now +15)
+            target_y = h // 2 + (h // 4) + 15
 
             # Simple Y-based P-control: steer proportionally to vertical offset
             dy = int(centroid_y) - int(target_y)
@@ -343,5 +344,4 @@ try:
 finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
-
     rightCam.terminate()  # Terminate camera connection

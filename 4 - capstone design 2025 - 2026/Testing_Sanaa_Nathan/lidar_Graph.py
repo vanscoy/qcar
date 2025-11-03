@@ -1,0 +1,75 @@
+from Quanser.q_essential import LIDAR
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Timer function
+startTime = time.time()
+def elapsed_time():
+    return time.time() - startTime
+
+# Simulation Parameters
+sampleRate = 30
+sampleTime = 1 / sampleRate
+simulationTime = 30.0
+print('Sample Time:', sampleTime)
+
+# Initialize LIDAR
+myLidar = LIDAR(num_measurements=720)  # 720 is usually enough
+counter = 0
+
+# Setup polar plot
+fig = plt.figure(figsize=(8, 8))
+ax = fig.add_subplot(111, polar=True)
+sc = ax.scatter([], [], s=5, c='red', alpha=0.75)
+ax.set_title("RPLIDAR Live Scan", va='bottom')
+ax.set_theta_zero_location("N")
+ax.set_theta_direction(-1)
+ax.grid(True)
+
+plt.tight_layout()
+plt.ion()
+plt.show()
+
+# Main loop
+try:
+    while elapsed_time() < simulationTime:
+        start = time.time()
+
+        myLidar.read()
+
+        if counter % 2 == 0:  # update more frequently (every 2 frames)
+            angles = myLidar.angles.flatten()
+            distances = myLidar.distances.flatten()
+
+            # Optional: filter out zero distances (no returns)
+            valid = distances > 0.01
+            angles = angles[valid]
+            distances = distances[valid]
+
+            sc.set_offsets(np.c_[angles, distances])
+            if distances.size > 0:
+                ax.set_rmax(np.max(distances) + 0.5)
+            else:
+                ax.set_rmax(1.0)  # Default zoom when no valid data
+
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+
+        end = time.time()
+        computationTime = end - start
+        sleepTime = sampleTime - (computationTime % sampleTime)
+
+        if sleepTime > 0:
+            time.sleep(sleepTime)
+
+        counter += 1
+        print(f"Simulation Timestamp: {elapsed_time():.2f} s.")
+
+except KeyboardInterrupt:
+    print("User interrupted!")
+
+finally:
+    plt.ioff()
+    plt.close()
+    myLidar.terminate()

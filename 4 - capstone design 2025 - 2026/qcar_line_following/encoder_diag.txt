@@ -1,0 +1,112 @@
+=== myCar dir() ===
+__class__
+__delattr__
+__dict__
+__dir__
+__doc__
+__eq__
+__format__
+__ge__
+__getattribute__
+__gt__
+__hash__
+__init__
+__init_subclass__
+__le__
+__lt__
+__module__
+__ne__
+__new__
+__reduce__
+__reduce_ex__
+__repr__
+__setattr__
+__sizeof__
+__str__
+__subclasshook__
+__weakref__
+accelerometer
+bat_voltage
+card
+gyroscope
+mtr_current
+mtr_encoder
+read_IMU
+read_accelerometer
+read_analog_buffer_battery
+read_analog_buffer_power
+read_analog_channels_battery
+read_analog_channels_power
+read_encoder
+read_encoder_buffer_throttle
+read_encoder_channels_throttle
+read_gyroscope
+read_other_buffer_IMU
+read_other_buffer_accelerometer
+read_other_buffer_gyroscope
+read_other_channels_IMU
+read_other_channels_accelerometer
+read_other_channels_gyroscope
+read_power
+read_std
+read_write_std
+terminate
+write_LEDs
+write_mtrs
+write_other_buffer_LEDs
+write_other_buffer_steering
+write_other_buffer_str_LEDs
+write_other_buffer_usr_LEDs
+write_other_channel_steering
+write_other_channels_LEDs
+write_other_channels_str_LEDs
+write_other_channels_usr_LEDs
+write_pwm_buffer_throttle
+write_pwm_channel_throttle
+write_std
+write_usr_LEDs
+
+=== myCar.read() snapshot ===
+None
+
+=== Extended encoder diagnostics ===
+CALL read_encoder -> 0
+ATTR mtr_encoder -> array([0], dtype=int32)
+CALL read_std -> (0.0281982421875, 11.184228515625, 0)
+ATTR read_encoder_channels_throttle -> array([0], dtype=int32)
+ATTR read_encoder_buffer_throttle -> array([0], dtype=int32)
+ATTR read_other_channels_accelerometer -> array([4000, 4001, 4002], dtype=int32)
+
+CALL read_write_std(mtr_cmd, LEDs) -> (0.0281982421875, 11.201953125, 0)
+
+=== Active encoder probe samples ===
+1760736684.556576: read_write_std -> (0.0322265625, 11.184228515625, 0) | read_encoder -> 0 | mtr_encoder -> array([0], dtype=int32)
+1760736684.6577768: read_write_std -> (0.153076171875, 11.193090820312499, 92) | read_encoder -> 92 | mtr_encoder -> array([0], dtype=int32)
+1760736684.7593899: read_write_std -> (0.1611328125, 11.184228515625, 96) | read_encoder -> 96 | mtr_encoder -> array([0], dtype=int32)
+1760736684.8605297: read_write_std -> (0.217529296875, 11.16650390625, 122) | read_encoder -> 122 | mtr_encoder -> array([0], dtype=int32)
+1760736684.9617105: read_write_std -> (0.1893310546875, 11.1576416015625, 139) | read_encoder -> 139 | mtr_encoder -> array([0], dtype=int32)
+1760736685.0632997: read_write_std -> (0.1812744140625, 11.148779296874999, 409) | read_encoder -> 410 | mtr_encoder -> array([0], dtype=int32)
+1760736685.1643693: read_write_std -> (0.1329345703125, 11.201953125, 1098) | read_encoder -> 1099 | mtr_encoder -> array([0], dtype=int32)
+1760736685.2654545: read_write_std -> (0.12890625, 11.148779296874999, 2028) | read_encoder -> 2029 | mtr_encoder -> array([0], dtype=int32)
+1760736685.3665805: read_write_std -> (0.2296142578125, 11.131054687499999, 2255) | read_encoder -> 2255 | mtr_encoder -> array([0], dtype=int32)
+1760736685.4677546: read_write_std -> (0.17724609375, 11.131054687499999, 2262) | read_encoder -> 2262 | mtr_encoder -> array([0], dtype=int32)
+1760736685.5693312: read_write_std -> (0.185302734375, 11.175366210937499, 2282) | read_encoder -> 2282 | mtr_encoder -> array([0], dtype=int32)
+1760736685.6710303: read_write_std -> (0.1490478515625, 11.193090820312499, 2782) | read_encoder -> 2783 | mtr_encoder -> array([0], dtype=int32)
+1760736685.7723286: read_write_std -> (0.193359375, 11.175366210937499, 3514) | read_encoder -> 3516 | mtr_encoder -> array([0], dtype=int32)
+1760736685.873768: read_write_std -> (0.136962890625, 11.201953125, 4539) | read_encoder -> 4541 | mtr_encoder -> array([0], dtype=int32)
+1760736685.9752214: read_write_std -> (0.1329345703125, 11.193090820312499, 5204) | read_encoder -> 5205 | mtr_encoder -> array([0], dtype=int32)
+1760736686.076344: read_write_std -> (0.17724609375, 11.184228515625, 5975) | read_encoder -> 5976 | mtr_encoder -> array([0], dtype=int32)
+1760736686.1776428: read_write_std -> (0.1490478515625, 11.184228515625, 6858) | read_encoder -> 6859 | mtr_encoder -> array([0], dtype=int32)
+1760736686.279117: read_write_std -> (0.14501953125, 11.193090820312499, 7929) | read_encoder -> 7930 | mtr_encoder -> array([0], dtype=int32)
+1760736686.3804555: read_write_std -> (0.120849609375, 11.175366210937499, 8694) | read_encoder -> 8697 | mtr_encoder -> array([0], dtype=int32)
+1760736686.4820235: read_write_std -> (0.153076171875, 11.184228515625, 9625) | read_encoder -> 9628 | mtr_encoder -> array([0], dtype=int32)
+
+=== Wheel mapping probe ===
+Phase forward: steer=0.0 enc_left_before=None enc_left_after=None delta_left=None | enc_right_before=None enc_right_after=None delta_right=None
+Phase left: steer=-1.0 enc_left_before=None enc_left_after=None delta_left=None | enc_right_before=None enc_right_after=None delta_right=None
+Phase right: steer=1.0 enc_left_before=None enc_left_after=None delta_left=None | enc_right_before=None enc_right_after=None delta_right=None
+
+=== Per-motor probe ===
+MotorA cmd [0.06, 0.0] enc_before=(None, None) enc_after=(None, None) delta=(None, None)
+MotorB cmd [0.0, 0.06] enc_before=(None, None) enc_after=(None, None) delta=(None, None)
+Appended per-motor probe results.

@@ -37,7 +37,8 @@ speed = 0.072
 steering_gain = 0.009  # Gain used for steering calculation (increased per user request)
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # Runtime steering invert toggle: when True steering is multiplied by -1 before sending
-steering_invert = False
+# Invert steering by default for this left-camera configuration. Press 'i' at runtime to toggle.
+steering_invert = True
 # Speed control constants for gain-based slowing during large turns
 # Updated per user: increase min speed to avoid stalling and bump max speed
 # New values: SPEED_MIN = 0.068, SPEED_MAX = 0.072
@@ -232,8 +233,8 @@ try:
 
             # Get centroid of the largest contour
             centroid_x, centroid_y = overlay_info['centroid']
-            # Target vertically centered in the crop, nudged down slightly (tuning)
-            target_y = crop_y + (crop_h // 2) + 15
+            # Target vertically centered in the crop, moved up 15 pixels from previous setting
+            target_y = crop_y + (crop_h // 2)
 
             # Simple Y-based P-control: steer proportionally to vertical offset
             dy = int(centroid_y) - int(target_y)

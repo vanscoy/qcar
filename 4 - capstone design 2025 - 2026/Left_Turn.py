@@ -8,7 +8,7 @@ import time
 import math
 
 # Camera and control params
-leftCam = Camera2D(camera_id="1", frame_width=640, frame_height=480, frame_rate=30.0)
+leftCam = Camera2D(camera_id="2", frame_width=640, frame_height=480, frame_rate=30.0)
 
 # Pixel offsets / tuning
 # target_offset is horizontal shift from centre: negative moves target left
@@ -218,4 +218,5 @@ finally:
     try:
         leftCam.terminate()
     except Exception:
+
         pass

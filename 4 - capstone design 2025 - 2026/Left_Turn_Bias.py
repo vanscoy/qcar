@@ -186,8 +186,8 @@ def get_right_line_offset(image):
                 # store offset as full-image X so main loop can compare directly to target_x
                 'offset': crop_x + cx
             }
-            return overlay_info  # Return overlay info
-    return None  # Return None if no line is found
+    # Always return (overlay_info, thresh) so caller can visualize the thresholded image
+    return overlay_info, thresh
 
 try:
     while True:  # Main control loop
@@ -203,7 +203,7 @@ try:
             time.sleep(0.05)
             continue
 
-        overlay_info = get_right_line_offset(img)  # Get overlay from crop
+        overlay_info, thresh = get_right_line_offset(img)  # Get overlay and threshold image from crop
 
         h, w, _ = img.shape  # Get image dimensions
         display_img = img.copy()  # Show full camera view
@@ -386,6 +386,14 @@ try:
         cv2.namedWindow('Left Camera View', cv2.WINDOW_NORMAL)
         cv2.resizeWindow('Left Camera View', 1280, 960)
         cv2.imshow('Left Camera View', display_img)
+
+        # Show thresholded view (binary) for debugging; resize to a visible size
+        try:
+            cv2.namedWindow('Thresh', cv2.WINDOW_NORMAL)
+            cv2.resizeWindow('Thresh', 640, 480)
+            cv2.imshow('Thresh', thresh)
+        except Exception:
+            pass
 
         key = cv2.waitKey(1)
         # Kill switch: ESC key (27) to exit

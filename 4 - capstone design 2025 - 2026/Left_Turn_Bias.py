@@ -163,10 +163,10 @@ def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
     # Crop the middle 50% vertically (remove top 25% and bottom 25%)
     crop_x = int(w * 0.2)  # remove left 20%
-    # remove top 45% and bottom 25% -> keep the band from 45% to 75% of the frame
-    top_crop = int(h * 0.45)
-    bottom_crop = int(h * 0.75)
-    lower_half = image[top_crop:bottom_crop, crop_x:]  # vertical band with left 20% removed
+    # keep the middle 50% vertically (remove top 25% and bottom 25%)
+    top_crop = h // 4
+    bottom_crop = (3 * h) // 4
+    lower_half = image[top_crop:bottom_crop, crop_x:]  # middle half with left 20% removed
     gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
@@ -216,12 +216,11 @@ try:
             frame_count = 0
             last_time = current_time
 
-        # Draw processing-area outline (keep vertical band from 45%->75%, left 20% cropped)
+        # Draw processing-area outline (middle 50% vertically, left 20% cropped)
         crop_x = int(w * 0.2)
-        crop_y = int(h * 0.45)  # top of the kept vertical band (45% down)
-        bottom_crop = int(h * 0.75)
+        crop_y = h // 4  # top of the middle 50% crop
         crop_w = w - crop_x
-        crop_h = bottom_crop - crop_y
+        crop_h = h // 2
         cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
         cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)
         cv2.line(display_img, (crop_x + crop_w - 1, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0,255,0), 2)

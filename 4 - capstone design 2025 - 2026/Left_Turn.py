@@ -161,33 +161,29 @@ total_distance_m = 0.0
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    # Crop the middle 50% vertically (remove top 25% and bottom 25%)
     crop_x = int(w * 0.2)  # remove left 20%
-    # remove top 45% and bottom 25% -> keep the band from 45% to 75% of the frame
+    # keep vertical band from 45% -> 75% of the frame (as previously configured)
     top_crop = int(h * 0.45)
     bottom_crop = int(h * 0.75)
-    lower_half = image[top_crop:bottom_crop, crop_x:]  # vertical band with left 20% removed
-    gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
-    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
+    lower_half = image[top_crop:bottom_crop, crop_x:]
+    gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     overlay_info = None
-    if contours:  # If any contours are found
-        largest = max(contours, key=cv2.contourArea)  # Select the largest contour (assumed to be the line)
-        M = cv2.moments(largest)  # Calculate moments for the largest contour
-        if M['m00'] > 0:  # Prevent division by zero
-            cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour (in right_crop)
-            cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour (in right_crop)
-            # Prepare overlay info in full-image coordinates
+    if contours:
+        largest = max(contours, key=cv2.contourArea)
+        M = cv2.moments(largest)
+        if M.get('m00', 0) > 0:
+            cx = int(M['m10'] / M['m00'])
+            cy = int(M['m01'] / M['m00'])
             contour_full = largest + np.array([crop_x, top_crop])
             centroid_full = (crop_x + cx, top_crop + cy)
             overlay_info = {
                 'contour': contour_full,
                 'centroid': centroid_full,
-                # store offset as full-image X so main loop can compare directly to target_x
                 'offset': crop_x + cx
             }
-            return overlay_info  # Return overlay info
-    return None  # Return None if no line is found
+    return overlay_info, thresh
 
 try:
     while True:  # Main control loop
@@ -203,7 +199,7 @@ try:
             time.sleep(0.05)
             continue
 
-        overlay_info = get_right_line_offset(img)  # Get overlay from crop
+        overlay_info, thresh = get_right_line_offset(img)  # Get overlay and thresh from crop
 
         h, w, _ = img.shape  # Get image dimensions
         display_img = img.copy()  # Show full camera view
@@ -319,6 +315,14 @@ try:
         cv2.namedWindow('Left Camera View', cv2.WINDOW_NORMAL)
         cv2.resizeWindow('Left Camera View', 1280, 960)
         cv2.imshow('Left Camera View', display_img)
+
+        # Show a black & white thresholded view for debugging
+        try:
+            cv2.namedWindow('Thresh', cv2.WINDOW_NORMAL)
+            cv2.resizeWindow('Thresh', 640, 480)
+            cv2.imshow('Thresh', thresh)
+        except Exception:
+            pass
 
         key = cv2.waitKey(1)
         # Kill switch: ESC key (27) to exit

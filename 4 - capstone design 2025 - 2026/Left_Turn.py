@@ -160,9 +160,11 @@ total_distance_m = 0.0
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    # Crop lower half but remove left 20% of image for line detection
+    # Crop the middle 50% vertically (remove top 25% and bottom 25%)
     crop_x = int(w * 0.2)  # remove left 20%
-    lower_half = image[h//2:h, crop_x:]  # lower half with left 20% removed
+    top_crop = h // 4
+    bottom_crop = (3 * h) // 4
+    lower_half = image[top_crop:bottom_crop, crop_x:]  # middle half with left 20% removed
     gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
@@ -174,8 +176,8 @@ def get_right_line_offset(image):
             cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour (in right_crop)
             cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour (in right_crop)
             # Prepare overlay info in full-image coordinates
-            contour_full = largest + np.array([crop_x, h//2])
-            centroid_full = (crop_x + cx, h//2 + cy)
+            contour_full = largest + np.array([crop_x, top_crop])
+            centroid_full = (crop_x + cx, top_crop + cy)
             overlay_info = {
                 'contour': contour_full,
                 'centroid': centroid_full,
@@ -212,11 +214,11 @@ try:
             frame_count = 0
             last_time = current_time
 
-        # Draw processing-area outline (lower half, left 20% cropped)
+        # Draw processing-area outline (middle 50% vertically, left 20% cropped)
         crop_x = int(w * 0.2)
-        crop_y = h // 2
+        crop_y = h // 4  # top of the middle 50% crop
         crop_w = w - crop_x
-        crop_h = h - crop_y
+        crop_h = (h // 2)
         cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
         cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)
         cv2.line(display_img, (crop_x + crop_w - 1, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0,255,0), 2)
@@ -228,8 +230,8 @@ try:
 
             # Get centroid of the largest contour
             centroid_x, centroid_y = overlay_info['centroid']
-            # Move the red target down by 30 pixels (tuning)
-            target_y = h // 2 + (h // 4) + 15
+            # Target vertically centered in the crop, nudged down slightly (tuning)
+            target_y = crop_y + (crop_h // 2) + 15
 
             # Simple Y-based P-control: steer proportionally to vertical offset
             dy = int(centroid_y) - int(target_y)

@@ -161,11 +161,13 @@ total_distance_m = 0.0
 # Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    crop_x = int(w * 0.2)  # remove left 20%
+    # remove left 20% and right 20% -> keep the middle 60% horizontally
+    crop_x = int(w * 0.2)  # left boundary (remove left 20%)
+    right_crop = int(w * 0.8)  # right boundary (remove right 20%)
     # keep vertical band from 45% -> 75% of the frame (as previously configured)
     top_crop = int(h * 0.45)
     bottom_crop = int(h * 0.75)
-    lower_half = image[top_crop:bottom_crop, crop_x:]
+    lower_half = image[top_crop:bottom_crop, crop_x:right_crop]
     gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -212,11 +214,12 @@ try:
             frame_count = 0
             last_time = current_time
 
-        # Draw processing-area outline (keep vertical band from 45%->75%, left 20% cropped)
+        # Draw processing-area outline (keep vertical band from 45%->75%, remove left/right 20%)
         crop_x = int(w * 0.2)
+        right_crop = int(w * 0.8)
         crop_y = int(h * 0.45)  # top of the kept vertical band (45% down)
         bottom_crop = int(h * 0.75)
-        crop_w = w - crop_x
+        crop_w = right_crop - crop_x
         crop_h = bottom_crop - crop_y
         cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
         cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)

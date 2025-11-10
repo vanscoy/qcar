@@ -208,6 +208,15 @@ def get_left_line_offset(image):
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    # If HSV white mask is too sparse (lighting makes white dim), fall back
+    # to a simple grayscale threshold similar to Left_Turn.py for robustness.
+    white_pixels = cv2.countNonZero(mask)
+    if white_pixels < 50:
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        _, mask = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY)
+        # small morphology cleanup
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     overlay_info = None
     if contours:

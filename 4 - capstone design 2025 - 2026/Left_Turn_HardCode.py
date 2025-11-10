@@ -193,10 +193,9 @@ def get_right_line_offset(image):
 # - INIT_TURN_SPEED: forward speed (m/s) during the turn
 # - INIT_TURN_STEERING: steering command during the turn (-0.5..0.5). Negative
 #   values typically steer left, positive steer right; adjust empirically.
-INIT_TURN_TIME = 1.0       # seconds
-INIT_TURN_SPEED = 0.05     # m/s (forward component during turn)
-INIT_TURN_STEERING = -0.25 # steering command during turn (negative -> left)
-
+INIT_TURN_TIME = 10       # seconds
+INIT_TURN_SPEED = 0.072     # m/s (forward component during turn)
+INIT_TURN_STEERING = 0.18 # steering command during turn (negative -> left)
 
 def do_initial_turn(qcar, duration=INIT_TURN_TIME, speed_m=INIT_TURN_SPEED, steering_cmd=INIT_TURN_STEERING,
                     leds=None, update_hz=20):
@@ -387,4 +386,5 @@ try:
 finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
+
     rightCam.terminate()  # Terminate camera connection

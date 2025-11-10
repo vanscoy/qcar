@@ -197,9 +197,9 @@ def get_left_line_offset(image):
     # remove left 20% and right 20% -> keep middle 60% horizontally
     crop_x = int(w * 0.2)
     right_crop = int(w * 0.8)
-    # narrow vertical band around center: 45% -> 55%
+    # vertical band around center: 45% -> 65% (widened to capture more below)
     top_crop = int(h * 0.45)
-    bottom_crop = int(h * 0.55)
+    bottom_crop = int(h * 0.65)
     crop = image[top_crop:bottom_crop, crop_x:right_crop]
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     lower_white = np.array([0, 0, 200], dtype=np.uint8)
@@ -249,11 +249,11 @@ try:
             frame_count = 0
             last_time = current_time
 
-        # Draw processing-area outline (narrow vertical band, middle 60% horizontally)
-        crop_x = int(w * 0.2)
-        right_crop = int(w * 0.8)
-        crop_y = int(h * 0.45)
-        bottom_crop = int(h * 0.55)
+    # Draw processing-area outline (vertical band, middle 60% horizontally)
+    crop_x = int(w * 0.2)
+    right_crop = int(w * 0.8)
+    crop_y = int(h * 0.45)
+    bottom_crop = int(h * 0.65)
         crop_w = right_crop - crop_x
         crop_h = bottom_crop - crop_y
         cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)

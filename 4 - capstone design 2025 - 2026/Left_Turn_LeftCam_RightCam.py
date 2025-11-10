@@ -315,7 +315,12 @@ try:
             pass
 
         calc_time_ms = (time.time() - start_calc) * 1000
-        steering_cmd = -steering if steering_invert else steering
+        # Invert steering for the left-camera phase so steering sense is flipped
+        # relative to the right-camera phase. Keep runtime toggle 'i' meaningful
+        # by flipping the conditional compared to the main loop:
+        # send -steering when steering_invert is False, and steer normally when True.
+        steering_cmd = -steering if not steering_invert else steering
+
         if 'centroid_y_for_speed' in locals() and centroid_y_for_speed is not None:
             prop = abs(target_y - int(centroid_y_for_speed)) + 1
             dynamic_speed = float(np.clip(SPEED_MAX - (SPEED_KP * float(prop)), SPEED_MIN, SPEED_MAX))

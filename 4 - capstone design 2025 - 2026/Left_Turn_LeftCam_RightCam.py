@@ -8,6 +8,9 @@ import cv2
 import numpy as np
 # Import time for delays and timing
 import time
+import subprocess
+import os
+import sys
 
 # Diagnostic flag: when True, print and save myCar.read() and dir(myCar) once at startup
 # Default False; use --diagnostics to enable at startup
@@ -232,134 +235,30 @@ def get_left_line_offset(image):
 try:
     kill = False
 
-    # --- Phase 1: left-camera closed-loop follow for LEFT_PHASE_TIME seconds ---
-    left_phase_start = time.time()
-    while time.time() - left_phase_start < LEFT_PHASE_TIME and not kill:
-        start_calc = time.time()
-        leftCam.read()
-        img = leftCam.image_data
-
-        if img is None or img.shape[0] == 0 or img.shape[1] == 0:
-            print("Warning: Left camera returned invalid image data.")
-            time.sleep(0.05)
-            continue
-
-        overlay_info, thresh = get_left_line_offset(img)
-
-        # Compute white-pixel diagnostics from the returned mask so we can
-        # display a helpful HUD value while tuning thresholds on the robot.
+    # --- Phase 1: Run the exact `Left_Turn.py` runtime as a separate process ---
+    left_script = os.path.join(os.path.dirname(__file__), 'Left_Turn.py')
+    if os.path.exists(left_script):
+        print(f"Launching Left_Turn.py for {LEFT_PHASE_TIME}s: {left_script}")
         try:
-            white_pixels = int(cv2.countNonZero(thresh)) if thresh is not None else 0
-            white_ratio = float(white_pixels) / float(thresh.size) if (thresh is not None and thresh.size) else 0.0
-        except Exception:
-            white_pixels = 0
-            white_ratio = 0.0
-
-        h, w, _ = img.shape
-        display_img = img.copy()
-
-        # Update frame counter and FPS
-        frame_count += 1
-        current_time = time.time()
-        if current_time - last_time >= 1.0:
-            fps = frame_count
-            frame_count = 0
-            last_time = current_time
-
-        # Draw processing-area outline (vertical band, middle 60% horizontally)
-        crop_x = int(w * 0.2)
-        right_crop = int(w * 0.8)
-        crop_y = int(h * 0.45)
-        bottom_crop = int(h * 0.65)
-        crop_w = right_crop - crop_x
-        crop_h = bottom_crop - crop_y
-        cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
-        cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)
-        cv2.line(display_img, (crop_x + crop_w - 1, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0,255,0), 2)
-
-        if overlay_info is not None:
-            target_x = int(w * 0.5) + target_offset
-            centroid_x, centroid_y = overlay_info['centroid']
-            target_y = crop_y + (crop_h // 2)
-            dy = int(centroid_y) - int(target_y)
-            if abs(dy) > 10:
-                steering = float(np.clip(dy * steering_gain, -0.5, 0.5))
-                control_mode = 'Y'
-            else:
-                steering = 0.0
-                control_mode = 'aligned'
-
-            centroid_y_for_speed = int(centroid_y)
-
+            proc = subprocess.Popen([sys.executable, left_script])
+            start_t = time.time()
+            while time.time() - start_t < LEFT_PHASE_TIME and not kill:
+                # simple wait loop; allow interrupt via ESC handled by child or parent
+                time.sleep(0.1)
+        except Exception as e:
+            print(f"Failed to launch Left_Turn.py: {e}")
+        finally:
             try:
-                cv2.drawContours(display_img, [overlay_info['contour']], -1, (255,0,0), 2)
-                cv2.circle(display_img, overlay_info['centroid'], 10, (255,0,0), -1)
+                proc.terminate()
+                proc.wait(timeout=2)
             except Exception:
-                pass
-
-            cv2.circle(display_img, (target_x, target_y), 10, (0,0,255), -1)
-            try:
-                cv2.putText(display_img, f'dy: {(int(centroid_y)-int(target_y)):+d} ctrl:{control_mode}',
-                            (HUD_X, HUD_Y + HUD_LINE_H * 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,200,255), 2)
-            except Exception:
-                pass
-        else:
-            steering = 0
-            centroid_y_for_speed = None
-
-        # Show mask diagnostics on HUD so it's obvious when thresholds are too strict
-        try:
-            cv2.putText(display_img, f'Left white pix: {white_pixels} ratio:{white_ratio:.3f}',
-                        (HUD_X, HUD_Y + HUD_LINE_H * 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-        except Exception:
-            pass
-
-        calc_time_ms = (time.time() - start_calc) * 1000
-        # Invert steering for the left-camera phase so steering sense is flipped
-        # relative to the right-camera phase. Keep runtime toggle 'i' meaningful
-        # by flipping the conditional compared to the main loop:
-        # send -steering when steering_invert is False, and steer normally when True.
-        steering_cmd = -steering if not steering_invert else steering
-
-        if 'centroid_y_for_speed' in locals() and centroid_y_for_speed is not None:
-            prop = abs(target_y - int(centroid_y_for_speed)) + 1
-            dynamic_speed = float(np.clip(SPEED_MAX - (SPEED_KP * float(prop)), SPEED_MIN, SPEED_MAX))
-        else:
-            dynamic_speed = float(SPEED_MIN)
-
-        mtr_cmd = np.array([dynamic_speed, steering_cmd])
-        LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])
-        try:
-            myCar.read_write_std(mtr_cmd, LEDs)
-        except Exception:
-            pass
-
-        # HUD overlays
-        cv2.putText(display_img, f'Left Phase Time: {time.time()-left_phase_start:.1f}/{LEFT_PHASE_TIME}s', (HUD_X, HUD_Y + HUD_LINE_H * 0),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
-        cv2.namedWindow('Left Camera View', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Left Camera View', 1280, 960)
-        cv2.imshow('Left Camera View', display_img)
-        try:
-            cv2.namedWindow('Left Thresh', cv2.WINDOW_NORMAL)
-            cv2.resizeWindow('Left Thresh', 640, 480)
-            cv2.imshow('Left Thresh', thresh)
-        except Exception:
-            pass
-
-        key = cv2.waitKey(1)
-        if key == 27:
-            kill = True
-            break
-        if key == ord('i'):
-            steering_invert = not steering_invert
-            print(f"Steering invert toggled: {steering_invert}")
-
-        time.sleep(0.05)
-
-    if kill:
-        # user requested exit during left phase
-        pass
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+    else:
+        print("Left_Turn.py not found alongside this script; cannot launch exact Left_Turn runtime.")
+        print("Please place Left_Turn.py in the same directory or I can fall back to the embedded left-phase detector.")
 
     # --- Phase 2: right-camera main loop (existing behavior) ---
     while True:  # Main control loop

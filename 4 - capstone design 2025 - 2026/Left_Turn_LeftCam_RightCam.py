@@ -193,29 +193,28 @@ def get_right_line_offset(image):
 
 # Function to find the line in the left-camera crop (white-only mask, narrow vertical band)
 def get_left_line_offset(image):
+    """Simple grayscale-threshold detector for the left camera.
+
+    This mirrors the working approach used in the original `Left_Turn.py`:
+    - keep the middle 60% horizontally (remove left/right 20%)
+    - crop a vertical band (45% -> 65% of frame height)
+    - convert to grayscale, threshold, find largest contour, return centroid
+    """
     h, w, _ = image.shape
-    # remove left 20% and right 20% -> keep middle 60% horizontally
+    # keep middle 60% horizontally
     crop_x = int(w * 0.2)
     right_crop = int(w * 0.8)
-    # vertical band around center: 45% -> 65% (widened to capture more below)
+    # vertical band: 45% -> 65%
     top_crop = int(h * 0.45)
     bottom_crop = int(h * 0.65)
     crop = image[top_crop:bottom_crop, crop_x:right_crop]
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    lower_white = np.array([0, 0, 200], dtype=np.uint8)
-    upper_white = np.array([180, 60, 255], dtype=np.uint8)
-    mask = cv2.inRange(hsv, lower_white, upper_white)
+
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    # Use the simple threshold value that worked in Left_Turn.py
+    _, mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    # small morphological cleanup to remove noise
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-    # If HSV white mask is too sparse (lighting makes white dim), fall back
-    # to a simple grayscale threshold similar to Left_Turn.py for robustness.
-    white_pixels = cv2.countNonZero(mask)
-    if white_pixels < 50:
-        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        _, mask = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY)
-        # small morphology cleanup
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     overlay_info = None
@@ -246,6 +245,15 @@ try:
             continue
 
         overlay_info, thresh = get_left_line_offset(img)
+
+        # Compute white-pixel diagnostics from the returned mask so we can
+        # display a helpful HUD value while tuning thresholds on the robot.
+        try:
+            white_pixels = int(cv2.countNonZero(thresh)) if thresh is not None else 0
+            white_ratio = float(white_pixels) / float(thresh.size) if (thresh is not None and thresh.size) else 0.0
+        except Exception:
+            white_pixels = 0
+            white_ratio = 0.0
 
         h, w, _ = img.shape
         display_img = img.copy()
@@ -298,6 +306,13 @@ try:
         else:
             steering = 0
             centroid_y_for_speed = None
+
+        # Show mask diagnostics on HUD so it's obvious when thresholds are too strict
+        try:
+            cv2.putText(display_img, f'Left white pix: {white_pixels} ratio:{white_ratio:.3f}',
+                        (HUD_X, HUD_Y + HUD_LINE_H * 7), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
+        except Exception:
+            pass
 
         calc_time_ms = (time.time() - start_calc) * 1000
         steering_cmd = -steering if steering_invert else steering

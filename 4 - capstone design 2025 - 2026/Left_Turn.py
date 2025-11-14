@@ -31,7 +31,12 @@ steering_invert = True
 
 SPEED_MAX = 0.078
 SPEED_MIN = 0.072
-SPEED_KP = 2.96296e-05
+ # Recompute SPEED_KP so SPEED_MIN = SPEED_MAX - SPEED_KP * prop_max
+ # where prop = abs(target_y - centroid_y) + 1 and target/centroid are in pixels.
+ # Current frame height = 480, vertical crop from 45%->55% => crop_h = 48 px.
+ # Maximum |target_y-centroid_y| ≈ crop_h/2 = 24, so prop_max ≈ 24 + 1 = 25.
+ # Therefore SPEED_KP = (SPEED_MAX - SPEED_MIN) / prop_max = 0.004 / 25 = 0.00016
+SPEED_KP = 0.00016
 
 
 Y_IGNORE_THRESHOLD = 100

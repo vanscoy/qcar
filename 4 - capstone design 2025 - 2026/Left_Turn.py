@@ -95,10 +95,18 @@ try:
             time.sleep(0.05)
             continue
 
-        overlay_info, thresh = get_right_line_offset(img)  # Get overlay and thresh from crop
-
         h, w, _ = img.shape  # Get image dimensions
         display_img = img.copy()  # Show full camera view
+
+        # Draw processing-area outline (keep vertical band from 45%->65%, remove left/right 20%)
+        crop_x = int(w * 0.2)
+        right_crop = int(w * 0.8)
+        crop_y = int(h * 0.45)  # top of the kept vertical band (45% down)
+        bottom_crop = int(h * 0.65)  # bottom moved down to 65% to include more lower frame
+        crop_w = right_crop - crop_x
+        crop_h = bottom_crop - crop_y
+
+        overlay_info, thresh = get_right_line_offset(img)  # Get overlay and thresh from crop
 
         # Update frame counter and FPS
         frame_count += 1
@@ -108,13 +116,6 @@ try:
             frame_count = 0
             last_time = current_time
 
-        # Draw processing-area outline (keep vertical band from 45%->65%, remove left/right 20%)
-        crop_x = int(w * 0.2)
-        right_crop = int(w * 0.8)
-        crop_y = int(h * 0.45)  # top of the kept vertical band (45% down)
-        bottom_crop = int(h * 0.65)  # bottom moved down to 65% to include more lower frame
-        crop_w = right_crop - crop_x
-        crop_h = bottom_crop - crop_y
         cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
         cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)
         cv2.line(display_img, (crop_x + crop_w - 1, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0,255,0), 2)

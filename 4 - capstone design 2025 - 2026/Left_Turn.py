@@ -98,9 +98,9 @@ try:
         h, w, _ = img.shape  # Get image dimensions
         display_img = img.copy()  # Show full camera view
 
-    # Draw processing-area outline (keep vertical band from 45%->65%, remove left 30% and right 20%)
-    crop_x = int(w * 0.3)
-    right_crop = int(w * 0.8)
+        # Draw processing-area outline (keep vertical band from 45%->65%, remove left 30% and right 20%)
+        crop_x = int(w * 0.3)
+        right_crop = int(w * 0.8)
         crop_y = int(h * 0.45)  # top of the kept vertical band (45% down)
         bottom_crop = int(h * 0.65)  # bottom moved down to 65% to include more lower frame
         crop_w = right_crop - crop_x

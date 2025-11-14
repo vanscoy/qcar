@@ -55,8 +55,8 @@ HUD_LINE_H = 24
 
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    # remove left 20% and right 20% -> keep the middle 60% horizontally
-    crop_x = int(w * 0.2)  # left boundary (remove left 20%)
+    # remove left 30% and right 20% -> keep the middle 50% horizontally
+    crop_x = int(w * 0.3)  # left boundary (remove left 30%)
     right_crop = int(w * 0.8)  # right boundary (remove right 20%)
     # keep vertical band from 45% -> 65% of the frame (wider band to include more lower image)
     top_crop = int(h * 0.45)
@@ -98,9 +98,9 @@ try:
         h, w, _ = img.shape  # Get image dimensions
         display_img = img.copy()  # Show full camera view
 
-        # Draw processing-area outline (keep vertical band from 45%->65%, remove left/right 20%)
-        crop_x = int(w * 0.2)
-        right_crop = int(w * 0.8)
+    # Draw processing-area outline (keep vertical band from 45%->65%, remove left 30% and right 20%)
+    crop_x = int(w * 0.3)
+    right_crop = int(w * 0.8)
         crop_y = int(h * 0.45)  # top of the kept vertical band (45% down)
         bottom_crop = int(h * 0.65)  # bottom moved down to 65% to include more lower frame
         crop_w = right_crop - crop_x
@@ -232,4 +232,3 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     leftCam.terminate()  # Terminate camera connection
-

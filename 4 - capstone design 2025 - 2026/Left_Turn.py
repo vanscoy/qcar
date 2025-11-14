@@ -77,8 +77,8 @@ def get_right_line_offset(image):
                 # store offset as full-image X so main loop can compare directly to target_x
                 'offset': crop_x + cx
             }
-            return overlay_info  # Return overlay info
-    return None  # Return None if no line is found
+            return overlay_info, thresh  # Return overlay info and threshold image
+    return None, thresh  # Return None (no overlay) and the threshold image if no line is found
 
 try:
     while True:  # Main control loop

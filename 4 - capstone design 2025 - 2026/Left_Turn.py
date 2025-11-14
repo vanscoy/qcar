@@ -12,20 +12,10 @@ import time
 # Diagnostic flag: when True, print and save myCar.read() and dir(myCar) once at startup
 # Default False; use --diagnostics to enable at startup
 DIAGNOSTICS_ON = False
-# If no discrete encoder counts are exposed by the model/driver, fall back to using
-# the first element returned by read_write_std() as a motor velocity (revolutions/sec).
-# Set to False to disable this heuristic.
+
 FALLBACK_RET0_AS_RPS = False
 
 
-# NOTE: Diagnostics/probe helper functions were removed to keep the runtime script
-# small and focused. The remaining helper functions `read_encoder_velocity` and
-# `read_encoders` are retained because they're used at runtime to obtain encoder
-# values when available.
-
-# Parse CLI args for diagnostics toggle
-
-# Create QCar object for robot control
 myCar = QCar()
 # Create left camera object (user requested camera_id=2)
 leftCam = Camera2D(camera_id="2", frame_width=640, frame_height=480, frame_rate=30.0)
@@ -36,26 +26,17 @@ target_offset = 50
 speed = 0.072
 steering_gain = 0.009  # Gain used for steering calculation (increased per user request)
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
-# Runtime steering invert toggle: when True steering is multiplied by -1 before sending
-# Invert steering by default for this left-camera configuration. Press 'i' at runtime to toggle.
+# Runtime steering invert: when True steering is multiplied by -1 before sending
 steering_invert = True
-# Speed control constants for gain-based slowing during large turns
-# Updated per user: increase min speed to avoid stalling and bump max speed
-# New values: SPEED_MIN = 0.068, SPEED_MAX = 0.072
-# Kp chosen so that 0.068 = 0.072 - Kp * (135) -> Kp ~= 2.96296e-05
-SPEED_MAX = 0.072
-SPEED_MIN = 0.068
+
+SPEED_MAX = 0.078
+SPEED_MIN = 0.072
 SPEED_KP = 2.96296e-05
 
-# Contour acceptance thresholds (pixels). If a new detection differs from the
-# last accepted centroid by more than these thresholds it will be considered
-# spurious/incorrect. Both X and Y must be within the thresholds to accept.
+
 Y_IGNORE_THRESHOLD = 100
 X_IGNORE_THRESHOLD = 100
 
-# Last accepted centroid (full-image coords) as (x, y). Initialized to None
-# and set on first valid detection. Used to filter spurious contours (e.g.,
-# large yellow lines) and to provide a fallback when ignored contours appear.
 last_accepted_centroid = None
 
 # Frame counter and FPS calculation
@@ -67,98 +48,6 @@ HUD_X = 10
 HUD_Y = 20
 HUD_LINE_H = 24
 
-# ...existing code...
-
-# --- Simplified encoder helper (user-provided, defensive) -------------------
-class speedCalc:
-    """Helper to compute speed (m/s) and distance (m) using a single encoder
-    reading from the QCar. This is defensive: if read_encoder() isn't available
-    it will return zeros instead of raising.
-    """
-    def __init__(self, qCar, t=None, counts_per_rev=31844, wheel_diameter_m=0.066):
-        self.qCar = qCar
-        self.t = time.time() if t is None else t
-        self.counts_per_rev = float(counts_per_rev)
-        self.wheel_diameter_m = float(wheel_diameter_m)
-        # seed begin_encoder if possible
-        try:
-            v = self.qCar.read_encoder()
-            if isinstance(v, (list, tuple, np.ndarray)):
-                self.begin_encoder = int(v[0])
-            else:
-                self.begin_encoder = int(v)
-        except Exception:
-            self.begin_encoder = None
-
-    def elapsed_time(self):
-        return time.time() - self.t
-
-    def encoder_speed(self):
-        """Return speed in m/s measured since last call. Updates internal timer
-        and begin_encoder so consecutive calls return relative speed.
-        """
-        now = time.time()
-        totalTime = now - self.t
-        self.t = now
-        if totalTime <= 0:
-            return 0.0
-        try:
-            v = self.qCar.read_encoder()
-            if isinstance(v, (list, tuple, np.ndarray)):
-                currentEncoder = int(v[0])
-            else:
-                currentEncoder = int(v)
-        except Exception:
-            return 0.0
-
-        if self.begin_encoder is None:
-            self.begin_encoder = currentEncoder
-            return 0.0
-
-        encoderChange = currentEncoder - self.begin_encoder
-        self.begin_encoder = currentEncoder
-        # distance per count = (pi * diameter) / counts_per_rev
-        dist = (encoderChange / self.counts_per_rev) * (self.wheel_diameter_m * np.pi)
-        return dist / totalTime
-
-    def encoder_dist(self):
-        """Return incremental distance (m) since last call and update the
-        stored encoder baseline.
-        """
-        try:
-            v = self.qCar.read_encoder()
-            if isinstance(v, (list, tuple, np.ndarray)):
-                currentEncoder = int(v[0])
-            else:
-                currentEncoder = int(v)
-        except Exception:
-            return 0.0
-
-        if self.begin_encoder is None:
-            # Seed baseline on first successful read and return zero distance
-            self.begin_encoder = currentEncoder
-            return 0.0
-
-        encoderChange = currentEncoder - self.begin_encoder
-        self.begin_encoder = currentEncoder
-        # use configured counts_per_rev and wheel_diameter_m for distance
-        dist = (encoderChange / self.counts_per_rev) * (self.wheel_diameter_m * np.pi)
-        return dist
-    
-    def encoder_cur(self):
-        return self.qCar.read_encoder()
-        
-
-# instantiate simplified encoder helper and distance accumulator
-speed_calc = speedCalc(myCar)
-total_distance_m = 0.0
-
-
-# Note: removed low-level encoder probing helpers to keep runtime simple.
-# If you need advanced probing later, reintroduce a minimal helper that
-# calls myCar.read_encoder() or parses read_write_std() returns.
-
-# Function to find the x-position of the detected line in the right crop
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
     # remove left 20% and right 20% -> keep the middle 60% horizontally
@@ -286,15 +175,10 @@ try:
         except Exception:
             pass
 
-        # Use simplified encoder helper for speed and incremental distance
-        try:
-            speed_m_s = speed_calc.encoder_speed()
-            dist_delta = speed_calc.encoder_dist()
-            dist_hardcode = speed_calc.encoder_cur()
-            total_distance_m = (dist_hardcode/31844) * (0.066*3.14)
-        except Exception:
-            speed_m_s = 0.0
-            dist_delta = 0.0
+        # Encoders are disabled in this trimmed script; provide zeroed values
+        speed_m_s = 0.0
+        dist_delta = 0.0
+        total_distance_m = 0.0
 
         # HUD overlays
         cv2.putText(display_img, f'Frames: {frame_count}  FPS: {fps}', (HUD_X, HUD_Y + HUD_LINE_H * 0),
@@ -306,13 +190,9 @@ try:
         angle = steering * max_steering_angle
         cv2.putText(display_img, f'Angle: {angle:.1f} deg', (HUD_X, HUD_Y + HUD_LINE_H * 3),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,128,255), 2)
-        try:
-            cv2.putText(display_img, f'Speed cmd: {dynamic_speed:.3f} m/s  enc_m/s: {speed_m_s:.3f}', (HUD_X, HUD_Y + HUD_LINE_H * 4),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
-        except Exception:
-            pass
-        cv2.putText(display_img, f'Distance: {total_distance_m:.3f} m', (HUD_X, HUD_Y + HUD_LINE_H * 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
+        # show commanded speed (encoders removed)
+        cv2.putText(display_img, f'Speed cmd: {dynamic_speed:.3f} m/s', (HUD_X, HUD_Y + HUD_LINE_H * 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200,200,200), 2)
 
         # Resize and show window
         cv2.namedWindow('Left Camera View', cv2.WINDOW_NORMAL)
@@ -332,10 +212,7 @@ try:
         if key == 27:
             print("Kill switch activated: ESC pressed.")
             break
-        # Toggle steering invert with 'i'
-        if key == ord('i'):
-            steering_invert = not steering_invert
-            print(f"Steering invert toggled: {steering_invert}")
+        # (steering invert toggle removed) -- steering_invert is fixed by variable above
 
         # Send motor command once per loop (safe write)
         LEDs = np.array([0, 0, 0, 0, 0, 0, 1, 1])

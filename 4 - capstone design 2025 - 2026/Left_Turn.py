@@ -232,3 +232,4 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     leftCam.terminate()  # Terminate camera connection
+

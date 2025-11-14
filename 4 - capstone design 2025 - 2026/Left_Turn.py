@@ -31,12 +31,12 @@ steering_invert = True
 
 SPEED_MAX = 0.078
 SPEED_MIN = 0.072
- # Recompute SPEED_KP so SPEED_MIN = SPEED_MAX - SPEED_KP * prop_max
- # where prop = abs(target_y - centroid_y) + 1 and target/centroid are in pixels.
- # Current frame height = 480, vertical crop from 45%->55% => crop_h = 48 px.
- # Maximum |target_y-centroid_y| ≈ crop_h/2 = 24, so prop_max ≈ 24 + 1 = 25.
- # Therefore SPEED_KP = (SPEED_MAX - SPEED_MIN) / prop_max = 0.004 / 25 = 0.00016
-SPEED_KP = 0.00016
+# Recompute SPEED_KP so SPEED_MIN = SPEED_MAX - SPEED_KP * prop_max
+# where prop = abs(target_y - centroid_y) + 1 and target/centroid are in pixels.
+# Current frame height = 480, vertical crop from 45%->65% => crop_h = 96 px.
+# Maximum |target_y-centroid_y| ≈ crop_h/2 = 48, so prop_max ≈ 48 + 1 = 49.
+# Therefore SPEED_KP = (SPEED_MAX - SPEED_MIN) / prop_max = 0.006 / 49 ≈ 8.16e-05
+SPEED_KP = 8.16e-05
 
 
 Y_IGNORE_THRESHOLD = 100
@@ -58,9 +58,9 @@ def get_right_line_offset(image):
     # remove left 20% and right 20% -> keep the middle 60% horizontally
     crop_x = int(w * 0.2)  # left boundary (remove left 20%)
     right_crop = int(w * 0.8)  # right boundary (remove right 20%)
-    # keep vertical band from 45% -> 55% of the frame (narrower band to reduce spurious lines)
+    # keep vertical band from 45% -> 65% of the frame (wider band to include more lower image)
     top_crop = int(h * 0.45)
-    bottom_crop = int(h * 0.55)  # bottom moved up to 55% (remove bottom 45%)
+    bottom_crop = int(h * 0.65)  # extend bottom to 65% (remove bottom 35%)
     lower_half = image[top_crop:bottom_crop, crop_x:right_crop]
     gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)
     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
@@ -108,12 +108,12 @@ try:
             frame_count = 0
             last_time = current_time
 
-        # Draw processing-area outline (keep vertical band from 45%->55%, remove left/right 20%)
-        crop_x = int(w * 0.2)
-        right_crop = int(w * 0.8)
-        crop_y = int(h * 0.45)  # top of the kept vertical band (45% down)
-        bottom_crop = int(h * 0.55)  # bottom moved up to 55% to remove bottom 45%
-        crop_w = right_crop - crop_x
+    # Draw processing-area outline (keep vertical band from 45%->65%, remove left/right 20%)
+            crop_x = int(w * 0.2)
+            right_crop = int(w * 0.8)
+            crop_y = int(h * 0.45)  # top of the kept vertical band (45% down)
+            bottom_crop = int(h * 0.65)  # bottom moved down to 65% to include more lower frame
+            crop_w = right_crop - crop_x
         crop_h = bottom_crop - crop_y
         cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
         cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)

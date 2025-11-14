@@ -24,7 +24,7 @@ leftCam = Camera2D(camera_id="2", frame_width=640, frame_height=480, frame_rate=
 target_offset = 50
 # Forward speed of the robot (lower value for slower movement)
 speed = 0.072
-steering_gain = 0.009  # Gain used for steering calculation (increased per user request)
+steering_gain = 0.03  # Gain used for steering calculation (increased per user request)
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # Runtime steering invert: when True steering is multiplied by -1 before sending
 steering_invert = True
@@ -232,4 +232,5 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     leftCam.terminate()  # Terminate camera connection
+
 

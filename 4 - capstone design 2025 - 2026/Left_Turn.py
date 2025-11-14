@@ -55,31 +55,30 @@ HUD_LINE_H = 24
 
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    # remove left 30% and right 20% -> keep the middle 50% horizontally
-    crop_x = int(w * 0.3)  # left boundary (remove left 30%)
-    right_crop = int(w * 0.8)  # right boundary (remove right 20%)
-    # keep vertical band from 45% -> 65% of the frame (wider band to include more lower image)
-    top_crop = int(h * 0.45)
-    bottom_crop = int(h * 0.65)  # extend bottom to 65% (remove bottom 35%)
-    lower_half = image[top_crop:bottom_crop, crop_x:right_crop]
-    gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Crop lower half but remove left 20% of image for line detection
+    crop_x = int(w * 0.2)  # remove left 20%
+    lower_half = image[h//2:h, crop_x:]  # lower half with left 20% removed
+    gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
     overlay_info = None
-    if contours:
-        largest = max(contours, key=cv2.contourArea)
-        M = cv2.moments(largest)
-        if M.get('m00', 0) > 0:
-            cx = int(M['m10'] / M['m00'])
-            cy = int(M['m01'] / M['m00'])
-            contour_full = largest + np.array([crop_x, top_crop])
-            centroid_full = (crop_x + cx, top_crop + cy)
+    if contours:  # If any contours are found
+        largest = max(contours, key=cv2.contourArea)  # Select the largest contour (assumed to be the line)
+        M = cv2.moments(largest)  # Calculate moments for the largest contour
+        if M['m00'] > 0:  # Prevent division by zero
+            cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour (in right_crop)
+            cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour (in right_crop)
+            # Prepare overlay info in full-image coordinates
+            contour_full = largest + np.array([crop_x, h//2])
+            centroid_full = (crop_x + cx, h//2 + cy)
             overlay_info = {
                 'contour': contour_full,
                 'centroid': centroid_full,
+                # store offset as full-image X so main loop can compare directly to target_x
                 'offset': crop_x + cx
             }
-    return overlay_info, thresh
+            return overlay_info  # Return overlay info
+    return None  # Return None if no line is found
 
 try:
     while True:  # Main control loop
@@ -232,6 +231,3 @@ finally:
     cv2.destroyAllWindows()  # Close all OpenCV windows
     myCar.terminate()  # Terminate QCar connection
     leftCam.terminate()  # Terminate camera connection
-
-
-

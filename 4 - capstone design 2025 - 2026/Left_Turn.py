@@ -27,7 +27,7 @@ speed = 0.072
 steering_gain = 0.02  # Gain used for steering calculation (increased per user request)
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # Runtime steering invert: when True steering is multiplied by -1 before sending
-steering_invert = True
+steering_invert = False  # inverted steering applied via runtime flag; set False to flip direction
 
 SPEED_MAX = 0.078
 SPEED_MIN = 0.072
@@ -55,30 +55,34 @@ HUD_LINE_H = 24
 
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
-    # Crop lower half but remove left 20% of image for line detection
-    crop_x = int(w * 0.2)  # remove left 20%
-    lower_half = image[h//2:h, crop_x:]  # lower half with left 20% removed
-    gray = cv2.cvtColor(lower_half, cv2.COLOR_BGR2GRAY)  # Convert cropped image to grayscale
-    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)  # Threshold to highlight bright lines
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)  # Find contours
+    # Use the same crop fractions as the main loop so detections lie inside the drawn box
+    crop_x = int(w * 0.3)       # remove left 30%
+    right_crop = int(w * 0.8)   # remove right 20%
+    top_crop = int(h * 0.45)
+    bottom_crop = int(h * 0.65)
+
+    # Crop the image to the processing rectangle and run the same threshold/contour pipeline
+    proc = image[top_crop:bottom_crop, crop_x:right_crop]
+    gray = cv2.cvtColor(proc, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     overlay_info = None
-    if contours:  # If any contours are found
-        largest = max(contours, key=cv2.contourArea)  # Select the largest contour (assumed to be the line)
-        M = cv2.moments(largest)  # Calculate moments for the largest contour
-        if M['m00'] > 0:  # Prevent division by zero
-            cx = int(M['m10'] / M['m00'])  # Compute center x-position of the contour (in right_crop)
-            cy = int(M['m01'] / M['m00'])  # Compute center y-position of the contour (in right_crop)
-            # Prepare overlay info in full-image coordinates
-            contour_full = largest + np.array([crop_x, h//2])
-            centroid_full = (crop_x + cx, h//2 + cy)
+    if contours:
+        largest = max(contours, key=cv2.contourArea)
+        M = cv2.moments(largest)
+        if M.get('m00', 0) > 0:
+            cx = int(M['m10'] / M['m00'])
+            cy = int(M['m01'] / M['m00'])
+            # Convert contour and centroid back to full-image coordinates
+            contour_full = largest + np.array([crop_x, top_crop])
+            centroid_full = (crop_x + cx, top_crop + cy)
             overlay_info = {
                 'contour': contour_full,
                 'centroid': centroid_full,
-                # store offset as full-image X so main loop can compare directly to target_x
                 'offset': crop_x + cx
             }
-            return overlay_info, thresh  # Return overlay info and threshold image
-    return None, thresh  # Return None (no overlay) and the threshold image if no line is found
+    return overlay_info, thresh
 
 try:
     while True:  # Main control loop

@@ -23,11 +23,11 @@ leftCam = Camera2D(camera_id="2", frame_width=640, frame_height=480, frame_rate=
 # Desired pixel offset from right edge for line following
 target_offset = 50
 # Forward speed of the robot (lower value for slower movement)
-speed = 0.072
+speed = 0.07
 steering_gain = 0.02  # Gain used for steering calculation (increased per user request)
 max_steering_angle = 28  # Maximum steering angle in degrees (mechanical limit)
 # Runtime steering invert: when True steering is multiplied by -1 before sending
-steering_invert = False  # inverted steering applied via runtime flag; set False to flip direction
+steering_invert = True  # inverted steering applied via runtime flag; set False to flip direction
 
 SPEED_MAX = 0.078
 SPEED_MIN = 0.072
@@ -86,7 +86,6 @@ def get_right_line_offset(image):
 
 try:
     while True:  # Main control loop
-        start_calc = time.time()  # Start timing calculation
 
         # Capture image from left camera
         leftCam.read()
@@ -110,14 +109,6 @@ try:
         crop_h = bottom_crop - crop_y
 
         overlay_info, thresh = get_right_line_offset(img)  # Get overlay and thresh from crop
-
-        # Update frame counter and FPS
-        frame_count += 1
-        current_time = time.time()
-        if current_time - last_time >= 1.0:
-            fps = frame_count
-            frame_count = 0
-            last_time = current_time
 
         cv2.rectangle(display_img, (crop_x, crop_y), (crop_x + crop_w - 1, crop_y + crop_h - 1), (0, 255, 255), 2)
         cv2.line(display_img, (crop_x, crop_y), (crop_x, crop_y + crop_h - 1), (0,0,255), 2)

@@ -53,6 +53,90 @@ HUD_X = 10
 HUD_Y = 20
 HUD_LINE_H = 24
 
+
+class speedCalc:
+    """Helper to compute speed (m/s) and distance (m) using a single encoder
+    reading from the QCar. This is defensive: if read_encoder() isn't available
+    it will return zeros instead of raising.
+    """
+    def __init__(self, qCar, t=None, counts_per_rev=31844, wheel_diameter_m=0.066):
+        self.qCar = qCar
+        self.t = time.time() if t is None else t
+        self.counts_per_rev = float(counts_per_rev)
+        self.wheel_diameter_m = float(wheel_diameter_m)
+        # seed begin_encoder if possible
+        try:
+            v = self.qCar.read_encoder()
+            if isinstance(v, (list, tuple, np.ndarray)):
+                self.begin_encoder = int(v[0])
+            else:
+                self.begin_encoder = int(v)
+        except Exception:
+            self.begin_encoder = None
+
+    def elapsed_time(self):
+        return time.time() - self.t
+
+    def encoder_speed(self):
+        """Return speed in m/s measured since last call. Updates internal timer
+        and begin_encoder so consecutive calls return relative speed.
+        """
+        now = time.time()
+        totalTime = now - self.t
+        self.t = now
+        if totalTime <= 0:
+            return 0.0
+        try:
+            v = self.qCar.read_encoder()
+            if isinstance(v, (list, tuple, np.ndarray)):
+                currentEncoder = int(v[0])
+            else:
+                currentEncoder = int(v)
+        except Exception:
+            return 0.0
+
+        if self.begin_encoder is None:
+            self.begin_encoder = currentEncoder
+            return 0.0
+
+        encoderChange = currentEncoder - self.begin_encoder
+        self.begin_encoder = currentEncoder
+        # distance per count = (pi * diameter) / counts_per_rev
+        dist = (encoderChange / self.counts_per_rev) * (self.wheel_diameter_m * np.pi)
+        return dist / totalTime
+
+    def encoder_dist(self):
+        """Return incremental distance (m) since last call and update the
+        stored encoder baseline.
+        """
+        try:
+            v = self.qCar.read_encoder()
+            if isinstance(v, (list, tuple, np.ndarray)):
+                currentEncoder = int(v[0])
+            else:
+                currentEncoder = int(v)
+        except Exception:
+            return 0.0
+
+        if self.begin_encoder is None:
+            # Seed baseline on first successful read and return zero distance
+            self.begin_encoder = currentEncoder
+            return 0.0
+
+        encoderChange = currentEncoder - self.begin_encoder
+        self.begin_encoder = currentEncoder
+        # use configured counts_per_rev and wheel_diameter_m for distance
+        dist = (encoderChange / self.counts_per_rev) * (self.wheel_diameter_m * np.pi)
+        return dist
+
+    def encoder_cur(self):
+        return self.qCar.read_encoder()
+
+
+# instantiate simplified encoder helper and distance accumulator
+speed_calc = speedCalc(myCar)
+total_distance_m = 0.0
+
 def get_right_line_offset(image):
     h, w, _ = image.shape  # Get image dimensions
     # Use the same crop fractions as the main loop so detections lie inside the drawn box
@@ -64,7 +148,7 @@ def get_right_line_offset(image):
     # Crop the image to the processing rectangle and run the same threshold/contour pipeline
     proc = image[top_crop:bottom_crop, crop_x:right_crop]
     gray = cv2.cvtColor(proc, cv2.COLOR_BGR2GRAY)
-    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+    _, thresh = cv2.threshold(gray, 130, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     overlay_info = None

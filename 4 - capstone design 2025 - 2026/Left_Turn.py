@@ -153,8 +153,6 @@ try:
             steering = 0  # No line detected, go straight
             centroid_y_for_speed = None
 
-        # Calculate computation time
-        calc_time_ms = (time.time() - start_calc) * 1000
 
         # Prepare motor command (apply runtime invert if enabled)
         steering_cmd = -steering if steering_invert else steering
@@ -183,8 +181,7 @@ try:
         # HUD overlays
         cv2.putText(display_img, f'Frames: {frame_count}  FPS: {fps}', (HUD_X, HUD_Y + HUD_LINE_H * 0),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-        cv2.putText(display_img, f'Calc Time: {calc_time_ms:.1f} ms', (HUD_X, HUD_Y + HUD_LINE_H * 1),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,255), 2)
+
         cv2.putText(display_img, f'Steering: {steering:.3f}  Gain: {steering_gain}', (HUD_X, HUD_Y + HUD_LINE_H * 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
         angle = steering * max_steering_angle

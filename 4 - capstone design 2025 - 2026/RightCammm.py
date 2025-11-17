@@ -4,6 +4,8 @@ from Quanser.product_QCar import QCar
 from Quanser.q_essential import Camera2D
 # Import OpenCV for image processing
 import cv2
+import os
+from datetime import datetime
 # Import NumPy for numerical operations
 import numpy as np
 # Import time for delays and timing
@@ -228,19 +230,93 @@ try:
         cv2.putText(display_img, f'Distance: {total_distance_m:.3f} m', (HUD_X, HUD_Y + HUD_LINE_H * 6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
 
-        # Resize window for larger display
-        cv2.namedWindow('Right Camera View', cv2.WINDOW_NORMAL)
-        cv2.resizeWindow('Right Camera View', 1280, 960)
-        cv2.imshow('Right Camera View', display_img)  # Show full camera view with overlays
-        key = cv2.waitKey(1)  # Wait for key press (1 ms)
+        # --- Build multi-panel view (2 rows x 3 cols) ---
+        # Panel A: current output with overlays (display_img)
+        panel_current = display_img
+
+        # Panel B: raw, unmodified camera image
+        panel_raw = img.copy()
+
+        # Panel C: cropped portion (use same crop coords used for processing)
+        cropped = img[crop_y:crop_y + crop_h, crop_x:crop_x + crop_w].copy()
+        panel_cropped = cropped
+
+        # Panel D: cropped grayscale
+        try:
+            panel_cropped_gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+            # convert single-channel to BGR for tiled display
+            panel_cropped_gray_bgr = cv2.cvtColor(panel_cropped_gray, cv2.COLOR_GRAY2BGR)
+        except Exception:
+            panel_cropped_gray_bgr = np.zeros_like(panel_cropped)
+
+        # Panel E: cropped thresholded (black & white)
+        try:
+            _, panel_thresh = cv2.threshold(panel_cropped_gray, 150, 255, cv2.THRESH_BINARY)
+            panel_thresh_bgr = cv2.cvtColor(panel_thresh, cv2.COLOR_GRAY2BGR)
+        except Exception:
+            panel_thresh_bgr = np.zeros_like(panel_cropped)
+
+        # Panel F: contours drawn on the cropped thresholded image
+        try:
+            contours, _ = cv2.findContours(panel_thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            panel_contours = panel_cropped.copy()
+            if contours:
+                cv2.drawContours(panel_contours, contours, -1, (0, 0, 255), 2)
+        except Exception:
+            panel_contours = np.zeros_like(panel_cropped)
+
+        # Resize panels to a common small size for tiled display if needed
+        # We want a grid that fits comfortably in a 1280x960 window.
+        target_w = 420
+        target_h = 320
+        def fit_panel(p):
+            try:
+                return cv2.resize(p, (target_w, target_h), interpolation=cv2.INTER_AREA)
+            except Exception:
+                return np.zeros((target_h, target_w, 3), dtype=np.uint8)
+
+        p1 = fit_panel(panel_current)
+        p2 = fit_panel(panel_raw)
+        p3 = fit_panel(panel_cropped)
+        p4 = fit_panel(panel_cropped_gray_bgr)
+        p5 = fit_panel(panel_thresh_bgr)
+        p6 = fit_panel(panel_contours)
+
+        top_row = np.hstack((p1, p2, p3))
+        bot_row = np.hstack((p4, p5, p6))
+        tiled = np.vstack((top_row, bot_row))
+
+        cv2.namedWindow('Right Camera MultiView', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Right Camera MultiView', 1280, 960)
+        cv2.imshow('Right Camera MultiView', tiled)
+
+        key = cv2.waitKey(1) & 0xFF  # Wait for key press (1 ms)
         # Kill switch: ESC key (27) to exit
         if key == 27:
-            print("Kill switch activated: ESC pressed.")  # Print message if ESC is pressed
-            break  # Exit control loop
+            print("Kill switch activated: ESC pressed.")
+            break
         # Toggle steering invert with 'i'
         if key == ord('i'):
             steering_invert = not steering_invert
             print(f"Steering invert toggled: {steering_invert}")
+        # Save all panels when 's' is pressed
+        if key == ord('s'):
+            # Create timestamped folder
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            out_dir = os.path.join(os.getcwd(), f'capture_{ts}')
+            try:
+                os.makedirs(out_dir, exist_ok=True)
+                # Save original-sized images where practical
+                cv2.imwrite(os.path.join(out_dir, '01_current.png'), panel_current)
+                cv2.imwrite(os.path.join(out_dir, '02_raw.png'), panel_raw)
+                cv2.imwrite(os.path.join(out_dir, '03_cropped.png'), panel_cropped)
+                # Grayscale and threshold saved as single-channel PNGs
+                cv2.imwrite(os.path.join(out_dir, '04_cropped_gray.png'), panel_cropped_gray)
+                cv2.imwrite(os.path.join(out_dir, '05_thresh.png'), panel_thresh)
+                cv2.imwrite(os.path.join(out_dir, '06_contours.png'), panel_contours)
+                print(f"Saved 6 panels to {out_dir}")
+            except Exception as e:
+                print(f"Error saving images: {e}")
 
         time.sleep(0.05)  # Small delay for viewer loop timing
 finally:
@@ -248,14 +324,28 @@ finally:
     # Clean up camera wrapper if used. Use globals() checks so this code is
     # safe even if variables weren't created earlier.
     try:
-        if globals().get('USE_QUANSER_CAMERA', False) and globals().get('use_quanser', False):
+        # If the Quanser Camera2D `rightCam` exists, terminate it cleanly.
+        if 'rightCam' in globals() and globals().get('rightCam') is not None:
             try:
-                cam.terminate()
+                try:
+                    rightCam.terminate()
+                except Exception:
+                    # Some camera wrappers may use `release()` instead
+                    try:
+                        rightCam.release()
+                    except Exception:
+                        pass
             except Exception:
                 pass
+        # Otherwise, if an OpenCV VideoCapture `cap` was created, release it.
         elif 'cap' in globals() and globals().get('cap') is not None:
             try:
-                cap.release()
+                cap_var = globals().get('cap')
+                if cap_var is not None:
+                    try:
+                        cap_var.release()
+                    except Exception:
+                        pass
             except Exception:
                 pass
     except Exception:

@@ -17,6 +17,18 @@ import time
 import cv2
 from datetime import datetime
 
+# Try to use the same Camera2D helper used in Right_Turn.py when available. If
+# the Quanser SDK is not installed on this machine, fall back to OpenCV's
+# VideoCapture. This mirrors the camera activation used by the runtime scripts
+# (Right_Turn.py / Left_Turn.py) while remaining portable for desktop testing.
+USE_QUANSER_CAMERA = False
+try:
+    # Prefer the Quanser Camera2D wrapper when it exists in the environment
+    from Quanser.q_essential import Camera2D
+    USE_QUANSER_CAMERA = True
+except Exception:
+    USE_QUANSER_CAMERA = False
+
 
 def try_open(indices, width=None, height=None, timeout=2.0):
     """Try opening each index in indices and return (cap, idx) of the first that works."""
@@ -46,30 +58,56 @@ def main():
     p.add_argument('--height', type=int, default=480, help='Requested capture height')
     args = p.parse_args()
 
-    if args.id is not None:
-        indices = [args.id]
-    elif args.right:
-        indices = [1, 2, 3, 0]
+    # If Quanser Camera2D is available, create it using the same parameters
+    # used in Right_Turn.py. Otherwise, fall back to probing device indices.
+    if USE_QUANSER_CAMERA:
+        cam_id = str(args.id) if args.id is not None else "0"
+        try:
+            cam = Camera2D(camera_id=cam_id, frame_width=args.width, frame_height=args.height, frame_rate=30.0)
+            print(f'Opened Quanser Camera2D id={cam_id}')
+            use_quanser = True
+        except Exception as e:
+            print('Quanser Camera2D failed to open:', e)
+            print('Falling back to OpenCV VideoCapture probing')
+            use_quanser = False
     else:
-        indices = [0, 1, 2]
+        use_quanser = False
 
-    cap, idx = try_open(indices, width=args.width, height=args.height)
-    if cap is None:
-        print('No camera could be opened. Tried indices:', indices)
-        return
+    if not use_quanser:
+        if args.id is not None:
+            indices = [args.id]
+        elif args.right:
+            indices = [1, 2, 3, 0]
+        else:
+            indices = [0, 1, 2]
 
-    print(f'Opened camera index {idx}. Press q or ESC to quit, s to save a frame.')
-    win = f'Camera {idx}'
-    cv2.namedWindow(win, cv2.WINDOW_NORMAL)
+        cap, idx = try_open(indices, width=args.width, height=args.height)
+        if cap is None:
+            print('No camera could be opened. Tried indices:', indices)
+            return
+
+        print(f'Opened camera index {idx}. Press q or ESC to quit, s to save a frame.')
+        win = f'Camera {idx}'
+        cv2.namedWindow(win, cv2.WINDOW_NORMAL)
 
     last_t = time.time()
     frame_count = 0
     fps = 0.0
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            print('Frame read failed, exiting.')
-            break
+        if USE_QUANSER_CAMERA and use_quanser:
+            # read from the Camera2D wrapper similar to Right_Turn.py
+            cam.read()
+            frame = cam.image_data
+            ret = frame is not None and getattr(frame, 'size', 1) != 0
+            if not ret:
+                print('Warning: Quanser Camera returned invalid image data.')
+                time.sleep(0.05)
+                continue
+        else:
+            ret, frame = cap.read()
+            if not ret:
+                print('Frame read failed, exiting.')
+                break
 
         frame_count += 1
         if frame_count % 30 == 0:

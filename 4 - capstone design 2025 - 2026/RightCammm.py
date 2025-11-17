@@ -3,7 +3,7 @@ Untitled-1.py
 Copied utility: open a camera stream and display it. This file was created because the editor "untitled" buffer was empty.
 
 Usage:
-  python c:\Users\Nova-\Downloads\Untitled-1.py --right
+    python c:/Users/Nova-/Downloads/Untitled-1.py --right
 
 Keys while running:
   q or ESC - quit

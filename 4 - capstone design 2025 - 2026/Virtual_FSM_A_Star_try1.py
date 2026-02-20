@@ -142,6 +142,10 @@ def build_graph(edges):
     return graph
 
 
+def build_edge_length_lookup(edges):
+    return {(u, v): float(w) for u, v, w in edges}
+
+
 def get_allowed_neighbors(current, prev_node, graph):
     all_neighbors = graph.get(current, [])
     if current not in TURN_RESTRICTIONS:
@@ -244,6 +248,15 @@ ACTOR_NUMBER = 0
 # If yellow line OR turning -> speed = 3.0
 SPEED_NO_YELLOW = 1.5
 SPEED_YELLOW_OR_TURN = 3.0
+
+# ---------------- Time-based route progress (optional) ----------------
+# Dead-reckoning estimate:
+#   progressed_distance += commanded_speed * dt * SPEED_CMD_TO_MPS
+# Advance edge when progressed_distance reaches edge distance.
+ENABLE_TIME_BASED_ROUTE_PROGRESS = True
+SPEED_CMD_TO_MPS = 1.0   # calibration: speed-command units -> m/s
+EDGE_REACH_SCALE = 1.00  # >1.0 waits longer; <1.0 advances earlier
+EDGE_MIN_SECONDS = 0.80  # minimum time before allowing edge advance
 
 # ---------------- Front-line follower (VIRTUAL) ----------------
 BOTTOM_FRAC = 0.40          # bottom portion of image
@@ -518,6 +531,10 @@ def main():
 
     route_index = 0
     current_edge = (route[0], route[1]) if len(route) >= 2 else None
+    edge_lengths = build_edge_length_lookup(EDGES)
+    edge_progress_m = 0.0
+    edge_elapsed_s = 0.0
+    progress_dt_prev = time.time()
 
     # Stop at start
     car.set_velocity_and_request_state(
@@ -533,6 +550,8 @@ def main():
     try:
         while True:
             loop_t0 = time.time()
+            dt_progress = max(0.0, loop_t0 - progress_dt_prev)
+            progress_dt_prev = loop_t0
 
             okF, rawF = car.get_image(camera=FRONT_CAM)
             okR, rawR = car.get_image(camera=RIGHT_CAM)
@@ -661,6 +680,31 @@ def main():
 
             # ==================== End FSM ====================
 
+            # Time-based route progression (no localization required)
+            if ENABLE_TIME_BASED_ROUTE_PROGRESS and current_edge is not None:
+                u, v = current_edge
+                edge_len_m = edge_lengths.get((u, v), None)
+                if edge_len_m is not None:
+                    est_speed_mps = max(0.0, float(drive_speed) * SPEED_CMD_TO_MPS)
+                    edge_progress_m += est_speed_mps * dt_progress
+                    edge_elapsed_s += dt_progress
+
+                    required_m = max(0.0, edge_len_m * EDGE_REACH_SCALE)
+                    if edge_elapsed_s >= EDGE_MIN_SECONDS and edge_progress_m >= required_m:
+                        route_index += 1
+                        reached_node = route[route_index]
+                        print(f"[Route] Reached node {reached_node} (time-based estimate)")
+
+                        edge_progress_m = 0.0
+                        edge_elapsed_s = 0.0
+
+                        if route_index < (len(route) - 1):
+                            current_edge = (route[route_index], route[route_index + 1])
+                            print(f"[Route] Next edge: {current_edge[0]} -> {current_edge[1]}")
+                        else:
+                            current_edge = None
+                            print("[Route] Final destination reached (time-based estimate).")
+
             # HUD
             fps_count += 1
             now = time.time()
@@ -676,8 +720,10 @@ def main():
                         (HUD_X, HUD_Y + HUD_DY), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             cv2.putText(disp, f"Edge:{current_edge}",
                         (HUD_X, HUD_Y + 2*HUD_DY), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(disp, f"RouteIdx:{route_index}/{max(0, len(route)-1)}  EdgeProg:{edge_progress_m:.2f}m",
+                        (HUD_X, HUD_Y + 3*HUD_DY), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
             cv2.putText(disp, "Keys: ESC/Q quit | T RGB/BGR | V right-preview | R ROI | [ ] minA | P exit turn",
-                        (HUD_X, HUD_Y + 3*HUD_DY), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                        (HUD_X, HUD_Y + 4*HUD_DY), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
             cv2.imshow(WINDOW, disp)
 

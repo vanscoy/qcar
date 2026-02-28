@@ -1,1 +1,1300 @@
 
+# 1) Stop-sign arming uses the CURRENT SEGMENT MODE (route_modes[step]) instead of FSM state,
+#    so it works even when you're in ROUTE dispatch or transitioning.
+# 2) Stop-sign depth gate: NaN depth DOES NOT auto-reject (only rejects if finite and too far).
+# 3) Adds STOP sign debug window drawing (box + distance text).
+# 4) Traffic-light debounce is frozen while waiting (prevents flicker release).
+#
+# Keys:
+#   Q / ESC : quit
+#   T       : toggle RGB/BGR for camera frames
+#   R       : re-prompt pickup/dropoff and re-plan
+#   S       : emergency stop (goes IDLE)
+
+import time
+import enum
+import math
+from heapq import heappush, heappop
+
+import numpy as np
+import cv2
+
+from qvl.qlabs import QuanserInteractiveLabs
+from qvl.qcar2 import QLabsQCar2
+
+# -----------------------------
+# User-tunable parameters
+# -----------------------------
+ACTOR_NUMBER = 0
+
+SPEED_WHITE = 8.0
+SPEED_YELLOW = 8.0
+SPEED_STRAIGHT = 6.5
+SPEED_TURN = 5.0
+
+STEER_CLIP = 0.55
+ARRIVE_RADIUS_M = 1.8
+DWELL_SECONDS = 2.0
+
+# If follower is "lost" for too long, slow/stop for safety
+LOST_TIMEOUT_S = 1.5
+LOST_SPEED = 2.5
+
+SOURCE_IS_RGB = False  # press T to toggle
+
+# -----------------------------
+# WHITE follower params
+# -----------------------------
+W_ROI_START_FRAC = 0.90          # bottom 10%
+RIGHT_HALF_START_FRAC = 0.50     # right half
+
+W_S_MAX = 40
+W_V_MIN = 235
+
+LEN_MIN = 15
+WIDTH_MAX = 999
+
+W_TARGET_FROM_RIGHT_PX = 120
+W_STEER_GAIN = 0.0048  # tuned
+
+# -----------------------------
+# YELLOW follower params
+# -----------------------------
+Y_ROI_START_FRAC = 0.92          # bottom 8%
+Y_TARGET_FROM_RIGHT_PX = 700
+Y_STEER_GAIN = 0.005
+
+Y_H_MIN = 15
+Y_H_MAX = 40
+Y_S_MIN = 45
+Y_V_MIN = 80
+
+# -----------------------------
+# Turning params (fixed steer until yellow reacquired)
+# -----------------------------
+TURN_LEFT_STEER  = -0.17
+TURN_RIGHT_STEER = +0.24
+TURN_MIN_SECONDS = 0.35
+REACQUIRE_FRAMES = 4
+
+# -----------------------------
+# Graph planner coordinates
+# -----------------------------
+NODES = {
+    "HUB": (-11.311, -8.931, 0.005),
+
+    "A_1": (21.290, -0.082, 0.005),
+    "A_2": (19.728,  1.169, 0.005),
+
+    "B_1": (21.290, 19.392, 0.005),
+    "B_2": (19.832, 18.459, 0.005),
+
+    "C_1": (21.184, 29.076, 0.010),
+    "C_2": (18.894, 29.188, 0.005),
+
+    "D":   (22.539, 38.140, 0.005),
+    "E":   (16.186, 45.122, 0.005),
+    "F":   ( 9.415, 35.748, 0.005),
+
+    "G_1": ( 2.125, 45.018, 0.005),
+    "G_2": ( 6.499, 41.894, 0.005),
+
+    "H_1": (-19.748, 20.436, 0.005),
+    "H_2": (-17.040, 17.421, 0.005),
+
+    "I":   (-19.853,  1.273, 0.005),
+
+    "J_1": (-8.603,  8.456, 0.005),
+    "J_2": (-6.312, 10.958, 0.005),
+
+    "K_1": ( 0.146,  1.584, 0.005),
+    "K_2": ( 2.854,  0.644, 0.005),
+
+    "L_1": ( 8.895, 10.122, 0.005),
+    "L_2": ( 8.895,  8.255, 0.005),
+
+    "M_1": ( 2.542, 17.104, 0.005),
+    "M_2": (-0.062, 18.141, 0.005),
+
+    "N_1": (10.040, 30.536, 0.005),
+    "N_2": ( 8.583, 33.356, 0.005),
+
+    "O_1": (13.165, 11.172, 0.005),
+    "O_2": (13.27, 8.877, 0.005),
+
+    "P":   (14.833, 31.372, 0.005),
+}
+
+# ==========================================================
+# STOP SIGN (RGB+DEPTH)
+# ==========================================================
+STOP_DURATION_S = 3.0
+STOP_COOLDOWN_S = 6.0     # ignore additional detections after stopping
+
+SS_RED1_LOWER = np.array([0,   150, 120], dtype=np.uint8)
+SS_RED1_UPPER = np.array([6,   255, 255], dtype=np.uint8)
+SS_RED2_LOWER = np.array([170, 150, 120], dtype=np.uint8)
+SS_RED2_UPPER = np.array([179, 255, 255], dtype=np.uint8)
+
+SS_MIN_STOP_AREA = 200000000
+SS_MAX_STOP_AREA = 500000
+SS_MIN_ASPECT_RATIO = 1
+SS_MAX_STOP_DISTANCE_M = 0.75
+SS_STOP_DOWNSCALE = 0.6667
+
+SS_KERNEL3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+
+# STOP_ONLY_NEAR_NODES = {"M_2", "K_2", "L_1", "J_1"}
+# STOP_ARM_DIST_M = 9.0
+# STOP_COMMIT_M = 2.5
+
+# ==========================================================
+# TRAFFIC LIGHT (RGB+DEPTH) integration
+# ==========================================================
+TL_APPROACH = {"K_2", "M_2", "L_1", "J_1"}   # where we decide
+TL_EXIT     = {"K_1", "L_2", "M_1", "J_2"}   # leaving
+
+TL_ARM_DIST_M = 10.0
+TL_COMMIT_M   = 3.0
+
+TL_RED_DEBOUNCE_S  = 0.20
+TL_GREEN_RELEASE_S = 0.25   # slightly longer to avoid flicker
+
+TL_UPPER_ROI_RATIO  = 0.40
+TL_LEFT_CROP_RATIO  = 0.25
+TL_RIGHT_CROP_RATIO = 0.25
+
+TL_RED1_LOWER = np.array([0,   200, 150], dtype=np.uint8)
+TL_RED1_UPPER = np.array([10,  255, 255], dtype=np.uint8)
+TL_RED2_LOWER = np.array([170, 200, 150], dtype=np.uint8)
+TL_RED2_UPPER = np.array([179, 255, 255], dtype=np.uint8)
+
+TL_MIN_LIGHT_AREA = 20
+TL_MAX_LIGHT_AREA = 15000
+TL_MIN_AR = 0.2
+TL_MAX_AR = 5.0
+
+TL_MAX_LIGHT_DISTANCE_M = 20.0
+
+# -----------------------------
+# Directed maneuver edges: (u, v, mode)
+# Modes: L, R, Y, W, S
+# -----------------------------
+RAW_EDGES = [
+    ("HUB", "A_1", "W"),
+
+    ("A_1", "B_1", "W"),
+    ("A_1", "C_1", "W"),
+    ("A_1", "O_1", "L"),
+
+    ("A_2", "K_2", "Y"),
+
+    ("B_2", "O_1", "R"),
+    ("B_2", "A_2", "S"),
+
+    ("C_2", "B_2", "Y"),
+
+    ("C_1", "D",   "W"),
+    ("C_1", "E",   "W"),
+    ("C_1", "G_1", "W"),
+
+    ("D",   "E",   "W"),
+    ("D",   "G_1", "W"),
+
+    ("E",   "F",   "S"),
+
+    ("F",   "C_2", "S"),
+    ("F",   "N_2", "S"),
+    ("F",   "P",   "S"),
+
+    ("N_2", "M_2", "Y"),
+
+    ("G_1", "H_1", "Y"),
+    ("G_1", "J_1", "Y"),
+
+    ("G_2", "F",   "S"),
+
+    ("H_1", "I",   "S"),
+    ("I",   "HUB", "W"),
+
+    ("J_2", "G_2", "Y"),
+
+    ("J_1", "K_1", "R"),
+    ("J_1", "L_2", "S"),
+    ("J_1", "M_1", "L"),
+
+    ("M_1", "N_1", "Y"),
+
+    ("M_2", "L_2", "L"),
+    ("M_2", "K_1", "S"),
+    ("M_2", "J_2", "R"),
+
+    ("L_2", "O_2", "S"),
+
+    ("L_1", "M_1", "R"),
+    ("L_1", "J_2", "S"),
+    ("L_1", "K_1", "L"),
+
+    ("K_1", "A_1", "Y"),
+
+    ("K_2", "L_2", "R"),
+    ("K_2", "M_1", "S"),
+    ("K_2", "J_2", "L"),
+
+    ("O_1", "L_1", "S"),
+
+    ("O_2", "B_1", "L"),
+    ("O_2", "A_2", "R"),
+
+    ("N_1", "P",   "S"),
+    ("P",   "C_2", "S"),
+    ("P",   "D",   "S"),
+]
+
+# -----------------------------
+# FSM states
+# -----------------------------
+class State(enum.Enum):
+    IDLE = 0
+    ROUTE = 1
+    WHITE_FOLLOW = 2
+    YELLOW_FOLLOW = 3
+    STRAIGHT = 4
+    TURN_LEFT = 5
+    TURN_RIGHT = 6
+    STOP_WAIT = 7
+    TRAFFIC_LIGHT_WAIT = 8
+    STOP_SIGN_WAIT = 9
+
+# -----------------------------
+# Helpers: pose
+# -----------------------------
+def get_pose(car):
+    try:
+        ok, pos, rpy, _scale = car.get_world_transform()
+        if not ok:
+            return None
+        return float(pos[0]), float(pos[1]), float(rpy[2])
+    except Exception:
+        return None
+
+# -----------------------------
+# Helpers: planner
+# -----------------------------
+def coord_of(node: str):
+    if node not in NODES:
+        raise ValueError(f"Unknown node '{node}' (missing from NODES)")
+    return NODES[node]
+
+def dist_xy(u: str, v: str) -> float:
+    ux, uy, _ = coord_of(u)
+    vx, vy, _ = coord_of(v)
+    return math.hypot(vx - ux, vy - uy)
+
+def build_graph(raw_edges):
+    nodes = set()
+    for u, v, _ in raw_edges:
+        nodes.add(u)
+        nodes.add(v)
+
+    graph = {n: [] for n in nodes}
+    for u, v, mode in raw_edges:
+        w = dist_xy(u, v)
+        graph[u].append((v, w, mode))
+    return graph
+
+def dijkstra(graph, start, goal):
+    pq = [(0.0, start)]
+    best = {start: 0.0}
+    parent = {start: None}
+    parent_edge = {start: None}
+
+    while pq:
+        g, u = heappop(pq)
+        if g != best.get(u, float("inf")):
+            continue
+        if u == goal:
+            break
+        for v, w, mode in graph.get(u, []):
+            ng = g + w
+            if ng < best.get(v, float("inf")):
+                best[v] = ng
+                parent[v] = u
+                parent_edge[v] = (u, v, mode, w)
+                heappush(pq, (ng, v))
+
+    if goal not in best:
+        return None, float("inf"), None
+
+    path, steps = [], []
+    cur = goal
+    while cur is not None:
+        path.append(cur)
+        e = parent_edge[cur]
+        if e is not None:
+            steps.append(e)
+        cur = parent[cur]
+    path.reverse()
+    steps.reverse()
+    return path, best[goal], steps
+
+def plan_full_route(graph, pickup, dropoff):
+    legs = [("HUB", pickup), (pickup, dropoff), (dropoff, "HUB")]
+
+    full_nodes = []
+    full_modes = []
+
+    for i, (s, t) in enumerate(legs):
+        path, _cost, steps = dijkstra(graph, s, t)
+        if path is None:
+            raise RuntimeError(f"No path from {s} to {t}")
+
+        if i == 0:
+            full_nodes += path
+        else:
+            full_nodes += path[1:]
+
+        full_modes += [mode for (_u, _v, mode, _w) in steps]
+
+    if len(full_modes) != max(0, len(full_nodes) - 1):
+        raise RuntimeError(f"planner mismatch: modes={len(full_modes)} nodes={len(full_nodes)}")
+
+    return full_nodes, full_modes
+
+def ask_pick_drop(graph):
+    valid = sorted(graph.keys())
+    print("\nAvailable nodes (graph):")
+    print(" ".join(valid))
+    p = input("\nPickup node (example: M_1): ").strip().upper()
+    d = input("Dropoff node (example: B_2): ").strip().upper()
+    if p not in graph:
+        print("Invalid pickup. Using M_1.")
+        p = "M_1"
+    if d not in graph:
+        print("Invalid dropoff. Using B_2.")
+        d = "B_2"
+    return p, d
+
+# -----------------------------
+# Vision helpers
+# -----------------------------
+def ensure_bgr(frame):
+    global SOURCE_IS_RGB
+    if frame is None:
+        return None
+    if SOURCE_IS_RGB:
+        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    return frame
+
+def apply_roi(img_bgr, y_start_frac):
+    h, w = img_bgr.shape[:2]
+    y0 = int(np.clip(h * y_start_frac, 0, h - 1))
+    return img_bgr[y0:h, :], (0, y0)
+
+# -----------------------------
+# WHITE follower
+# -----------------------------
+def crop_right_half(roi_bgr, start_frac=0.5):
+    h, w = roi_bgr.shape[:2]
+    x0 = int(np.clip(w * start_frac, 0, w - 1))
+    return roi_bgr[:, x0:w], x0
+
+def make_white_mask(roi_bgr):
+    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+    _, S, V = cv2.split(hsv)
+    wmask = ((S <= W_S_MAX) & (V >= W_V_MIN)).astype(np.uint8) * 255
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    wmask = cv2.morphologyEx(wmask, cv2.MORPH_OPEN, k, iterations=1)
+    return wmask
+
+def pick_leftmost_contour(wmask, debug_img=None):
+    cnts, _ = cv2.findContours(wmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
+        return None, {"found": False, "reason": "No contours"}
+
+    best = None
+    best_cx = 1e18
+    rejects = {"short": 0, "wide": 0, "moments": 0}
+
+    for c in cnts:
+        x, y, bw, bh = cv2.boundingRect(c)
+        if bh < LEN_MIN:
+            rejects["short"] += 1
+            continue
+        if bw > WIDTH_MAX:
+            rejects["wide"] += 1
+            continue
+        M = cv2.moments(c)
+        if M["m00"] <= 0:
+            rejects["moments"] += 1
+            continue
+        cx = float(M["m10"] / M["m00"])
+        cy = float(M["m01"] / M["m00"])
+        if cx < best_cx:
+            best_cx = cx
+            best = (c, cx, cy, x, y, bw, bh)
+
+    if best is None:
+        return None, {
+            "found": False,
+            "reason": f"Rejected all | short:{rejects['short']} wide:{rejects['wide']} mom:{rejects['moments']}"
+        }
+
+    c, cx, cy, x, y, bw, bh = best
+    if debug_img is not None:
+        cv2.drawContours(debug_img, [c], -1, (0, 255, 255), 2)
+        cv2.rectangle(debug_img, (x, y), (x + bw, y + bh), (255, 0, 0), 2)
+        cv2.circle(debug_img, (int(cx), int(cy)), 6, (0, 255, 0), -1)
+
+    return {"centroid": (cx, cy), "bbox": (x, y, bw, bh)}, {"found": True, "reason": "OK"}
+
+def white_follow_step(img_bgr):
+    roi_bgr, (x_off, y_off) = apply_roi(img_bgr, W_ROI_START_FRAC)
+    roi_r_bgr, x_r_off = crop_right_half(roi_bgr, RIGHT_HALF_START_FRAC)
+    wmask = make_white_mask(roi_r_bgr)
+
+    debug = roi_r_bgr.copy()
+    pick, info = pick_leftmost_contour(wmask, debug_img=debug)
+
+    hR, wR = wmask.shape[:2]
+    target_x = float(max(0, wR - W_TARGET_FROM_RIGHT_PX))
+
+    turn = 0.0
+    found = False
+    status = f"NO | {info['reason']}"
+
+    if pick is not None:
+        found = True
+        cx, cy = pick["centroid"]
+        err = target_x - cx
+        turn = -err * W_STEER_GAIN
+        turn = float(np.clip(turn, -STEER_CLIP, STEER_CLIP))
+        cv2.circle(
+            debug,
+            (int(np.clip(target_x, 0, wR - 1)), int(np.clip(cy, 0, hR - 1))),
+            7, (255, 255, 255), -1
+        )
+        x, y, bw, bh = pick["bbox"]
+        status = f"FOUND | cx={cx:.1f} len={bh}px wid={bw}px err={err:+.1f} turn={turn:+.3f}"
+
+    overlay = img_bgr.copy()
+    rh, rw = debug.shape[:2]
+    full_x0 = x_off + x_r_off
+    full_y0 = y_off
+    overlay[full_y0:full_y0 + rh, full_x0:full_x0 + rw] = debug
+    cv2.rectangle(overlay, (full_x0, full_y0), (full_x0 + rw - 1, full_y0 + rh - 1), (0, 255, 0), 2)
+
+    return turn, overlay, wmask, status, found
+
+# -----------------------------
+# YELLOW follower
+# -----------------------------
+def make_yellow_mask(roi_bgr):
+    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+    H, S, V = cv2.split(hsv)
+    mask = ((H >= Y_H_MIN) & (H <= Y_H_MAX) & (S >= Y_S_MIN) & (V >= Y_V_MIN)).astype(np.uint8) * 255
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=1)
+    return mask
+
+def contour_centroid(cnt):
+    M = cv2.moments(cnt)
+    if M["m00"] <= 0:
+        return None
+    return float(M["m10"] / M["m00"]), float(M["m01"] / M["m00"])
+
+def yellow_follow_step(img_bgr):
+    roi_bgr, (x_off, y_off) = apply_roi(img_bgr, Y_ROI_START_FRAC)
+    ymask = make_yellow_mask(roi_bgr)
+
+    cnts, _ = cv2.findContours(ymask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    debug = roi_bgr.copy()
+
+    h, w = ymask.shape[:2]
+    target_x = float(max(0, w - Y_TARGET_FROM_RIGHT_PX))
+    cv2.line(debug, (int(target_x), 0), (int(target_x), h - 1), (255, 255, 255), 2)
+
+    turn = 0.0
+    found = False
+    status = "NO | No contours"
+
+    if cnts:
+        biggest = max(cnts, key=cv2.contourArea)
+        area = float(cv2.contourArea(biggest))
+        if area > 0:
+            cxy = contour_centroid(biggest)
+            if cxy is not None:
+                found = True
+                cx, cy = cxy
+                err = target_x - cx
+                turn = -err * Y_STEER_GAIN
+                turn = float(np.clip(turn, -STEER_CLIP, STEER_CLIP))
+                cv2.drawContours(debug, [biggest], -1, (0, 255, 255), 2)
+                cv2.circle(debug, (int(cx), int(cy)), 7, (0, 255, 0), -1)
+                cv2.circle(debug, (int(target_x), int(cy)), 7, (255, 255, 255), -1)
+                status = f"FOUND | area={area:.0f} cx={cx:.1f} err={err:+.1f} turn={turn:+.3f}"
+            else:
+                status = "NO | Moments degenerate"
+
+    overlay = img_bgr.copy()
+    rh, rw = debug.shape[:2]
+    overlay[y_off:y_off + rh, x_off:x_off + rw] = debug
+    cv2.rectangle(overlay, (x_off, y_off), (x_off + rw - 1, y_off + rh - 1), (0, 255, 0), 2)
+
+    return turn, overlay, ymask, status, found
+
+# -----------------------------
+# RGBD helpers
+# -----------------------------
+def normalize_depth(depth):
+    if depth is None or not hasattr(depth, "shape"):
+        return None
+    d = depth
+    if len(d.shape) == 3:
+        d = d[:, :, 0]
+    if d.dtype != np.float32 and d.dtype != np.float64:
+        d = d.astype(np.float32, copy=False)
+    return d
+
+def align_depth_to_rgb(depth_m, rgb_bgr):
+    if depth_m is None or rgb_bgr is None:
+        return None
+    h, w = rgb_bgr.shape[:2]
+    dh, dw = depth_m.shape[:2]
+    if (dh, dw) != (h, w):
+        depth_m = cv2.resize(depth_m, (w, h), interpolation=cv2.INTER_NEAREST)
+    return depth_m
+
+def read_distance_scalar(depth_m, cx, cy):
+    try:
+        if depth_m is None:
+            return math.nan
+        h, w = depth_m.shape[:2]
+        if cx < 0 or cy < 0 or cx >= w or cy >= h:
+            return math.nan
+        val = float(depth_m[cy, cx])
+        if not math.isfinite(val) or val <= 0.0:
+            return math.nan
+        return val
+    except Exception:
+        return math.nan
+
+def ss_read_depth_center(depth_img, cx, cy):
+    if depth_img is None:
+        return math.nan
+    h, w = depth_img.shape[:2]
+    if cx < 1 or cy < 1 or cx >= w - 1 or cy >= h - 1:
+        return math.nan
+    patch = depth_img[cy - 1:cy + 2, cx - 1:cx + 2].astype(np.float32)
+    patch = patch[np.isfinite(patch) & (patch > 0)]
+    if patch.size == 0:
+        return math.nan
+    return float(np.median(patch))
+
+def detect_stop_sign_rgbd_fast(rgb_bgr, depth_m):
+    """
+    QLabs-friendly stop sign detector:
+    - downscale
+    - red HSV mask
+    - contour area + aspect ratio
+    - depth median 3x3 at center
+    IMPORTANT CHANGE: NaN depth does NOT auto-reject (QLabs often gives NaN)
+    Returns: (seen, (x,y,w,h), dist_m)
+    """
+    h, w = rgb_bgr.shape[:2]
+    if SS_STOP_DOWNSCALE != 1.0:
+        small = cv2.resize(rgb_bgr,
+                           (int(w * SS_STOP_DOWNSCALE), int(h * SS_STOP_DOWNSCALE)),
+                           interpolation=cv2.INTER_LINEAR)
+    else:
+        small = rgb_bgr
+
+    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    mask1 = cv2.inRange(hsv, SS_RED1_LOWER, SS_RED1_UPPER)
+    mask2 = cv2.inRange(hsv, SS_RED2_LOWER, SS_RED2_UPPER)
+    mask = cv2.bitwise_or(mask1, mask2)
+
+    mask = cv2.GaussianBlur(mask, (5, 5), 0)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, SS_KERNEL3, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  SS_KERNEL3, iterations=1)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    scale = (1.0 / SS_STOP_DOWNSCALE) if SS_STOP_DOWNSCALE != 1.0 else 1.0
+    area_scale = (SS_STOP_DOWNSCALE ** 2)
+
+    for cnt in contours:
+        area = float(cv2.contourArea(cnt))
+        if area < SS_MIN_STOP_AREA * area_scale or area > SS_MAX_STOP_AREA * area_scale:
+            continue
+
+        x, y, ww, hh = cv2.boundingRect(cnt)
+        ar = (ww / float(hh)) if hh else 0.0
+        if ar < SS_MIN_ASPECT_RATIO or ar > (1.0 / SS_MIN_ASPECT_RATIO):
+            continue
+
+        cx_s, cy_s = x + ww // 2, y + hh // 2
+        cx_f, cy_f = int(cx_s * scale), int(cy_s * scale)
+
+        dist = ss_read_depth_center(depth_m, cx_f, cy_f)
+
+        # Only reject if distance is FINITE and too far
+        if math.isfinite(dist) and dist > SS_MAX_STOP_DISTANCE_M:
+            continue
+
+        x_f, y_f = int(x * scale), int(y * scale)
+        w_f, h_f = int(ww * scale), int(hh * scale)
+        return True, (x_f, y_f, w_f, h_f), dist
+
+    return False, None, None
+
+def on_tl_crossing(step, route_nodes):
+    """True only for approach->exit edges through the intersection."""
+    if step >= len(route_nodes) - 1:
+        return False, None, None
+    src = route_nodes[step]
+    dst = route_nodes[step + 1]
+    if (src in TL_APPROACH) and (dst in TL_EXIT):
+        return True, src, dst
+    return False, src, dst
+
+def dist_to_node_xy(xy, node):
+    tx, ty, _ = coord_of(node)
+    return float(np.linalg.norm(xy - np.array([tx, ty], dtype=np.float32)))
+
+def detect_red_traffic_light_rgbd(frame_bgr, depth_m):
+    """
+    Red-only traffic light detect with depth gate.
+    Returns:
+      red_seen(bool), dbg_roi_bgr, dbg_mask, best_dist_m, count
+    """
+    H, W = frame_bgr.shape[:2]
+    upper_h = int(H * TL_UPPER_ROI_RATIO)
+    xL = int(W * TL_LEFT_CROP_RATIO)
+    xR = int(W * (1.0 - TL_RIGHT_CROP_RATIO))
+
+    roi = frame_bgr[0:upper_h, xL:xR]
+    roi_depth = depth_m[0:upper_h, xL:xR] if depth_m is not None else None
+
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    m1 = cv2.inRange(hsv, TL_RED1_LOWER, TL_RED1_UPPER)
+    m2 = cv2.inRange(hsv, TL_RED2_LOWER, TL_RED2_UPPER)
+    red_mask = cv2.bitwise_or(m1, m2)
+
+    filtered = cv2.GaussianBlur(red_mask, (5, 5), 0)
+    k = np.ones((3, 3), np.uint8)
+    filtered = cv2.morphologyEx(filtered, cv2.MORPH_CLOSE, k)
+    filtered = cv2.morphologyEx(filtered, cv2.MORPH_OPEN, k)
+
+    cnts, _ = cv2.findContours(filtered, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    dbg = roi.copy()
+    accepted = []
+    best_dist = math.nan
+
+    for c in cnts:
+        area = float(cv2.contourArea(c))
+        if area < TL_MIN_LIGHT_AREA or area > TL_MAX_LIGHT_AREA:
+            continue
+
+        x, y, w, h = cv2.boundingRect(c)
+        ar = float(w) / float(h) if h > 0 else 0.0
+        if ar < TL_MIN_AR or ar > TL_MAX_AR:
+            continue
+
+        cx = x + w // 2
+        cy = y + h // 2
+        dist = read_distance_scalar(roi_depth, cx, cy) if roi_depth is not None else math.nan
+
+        if (not math.isnan(dist)) and dist > TL_MAX_LIGHT_DISTANCE_M:
+            continue
+
+        blob = red_mask[y:y + h, x:x + w]
+        if blob.size == 0 or cv2.countNonZero(blob) == 0:
+            continue
+
+        accepted.append((x, y, w, h, dist))
+        if math.isnan(best_dist):
+            best_dist = dist
+        else:
+            if math.isfinite(dist) and (not math.isfinite(best_dist) or dist < best_dist):
+                best_dist = dist
+
+    for (x, y, w, h, dist) in accepted:
+        cv2.rectangle(dbg, (x, y), (x + w, y + h), (0, 0, 255), 2)
+        ds = f"{dist:.2f}m" if math.isfinite(dist) else "N/A"
+        cv2.putText(dbg, f"RED {ds}", (x, max(18, y - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+
+    return (len(accepted) > 0), dbg, red_mask, best_dist, len(accepted)
+
+# -----------------------------
+# Main
+# -----------------------------
+def main():
+    global SOURCE_IS_RGB
+
+    hasPassenger = 1
+
+    qlabs = QuanserInteractiveLabs()
+    print("Connecting to QLabs (localhost)...")
+    qlabs.open("localhost")
+    print("Connected.")
+
+    car = QLabsQCar2(qlabs)
+    car.actorNumber = ACTOR_NUMBER
+    car.possess(car.CAMERA_TRAILING)
+
+    FRONT_CAM = car.CAMERA_CSI_FRONT
+    TL_CAM_RGB = car.CAMERA_RGB
+    TL_CAM_DEPTH = car.CAMERA_DEPTH
+
+    # Windows
+    WINDOW = "TAXI FSM (Overlay)"
+    WIN_MASK = "Mask (current follower)"
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    cv2.namedWindow(WIN_MASK, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW, 1200, 680)
+    cv2.resizeWindow(WIN_MASK, 900, 260)
+
+    WIN_TL = "TL RGB ROI (debug)"
+    WIN_TL_MASK = "TL Red Mask"
+    cv2.namedWindow(WIN_TL, cv2.WINDOW_NORMAL)
+    cv2.namedWindow(WIN_TL_MASK, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WIN_TL, 700, 350)
+    cv2.resizeWindow(WIN_TL_MASK, 700, 350)
+
+    WIN_STOP = "STOP Sign Debug (RGB)"
+    cv2.namedWindow(WIN_STOP, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WIN_STOP, 900, 500)
+
+    graph = build_graph(RAW_EDGES)
+
+    # sanity dear god: edges use known nodes
+    for u in graph.keys():
+        if u not in NODES:
+            raise ValueError(f"Graph node '{u}' missing from NODES")
+        for v, _w, _mode in graph[u]:
+            if v not in NODES:
+                raise ValueError(f"Graph edge {u}->{v} uses '{v}' missing from NODES")
+
+    pickup, dropoff = ask_pick_drop(graph)
+    route_nodes, route_modes = plan_full_route(graph, pickup, dropoff)
+    dwell_nodes = {pickup, dropoff}
+
+    step = 0
+    state = State.ROUTE
+    wait_until = None
+    lost_since = None
+
+    turn_started_t = None
+    yellow_ok_frames = 0
+
+    car.set_led_strip_uniform(color=[1, 0, 1])
+
+    print("\nKeys: Q/ESC quit | T RGB/BGR | R re-plan | S stop(IDLE)")
+    print("Mission:", " -> ".join(route_nodes))
+
+    car.set_velocity_and_request_state(
+        forward=0.0, turn=0.0,
+        headlights=False, leftTurnSignal=False, rightTurnSignal=False,
+        brakeSignal=True, reverseSignal=False
+    )
+
+    # Traffic light memory
+    resume_state = None
+    tl_red_since = None
+    tl_green_since = None
+    tl_red_seen = False
+
+    # Stop sign memory
+    stop_resume_state = None
+    stop_hold_until = None
+    stop_cooldown_until = 0.0
+    ss_seen = False
+    ss_box = None
+    ss_dist = None
+
+    try:
+        while True:
+            ok_rgb, raw_rgb = car.get_image(camera=FRONT_CAM)
+            if not ok_rgb or raw_rgb is None:
+                key = cv2.waitKey(1) & 0xFF
+                if key in (27, ord('q'), ord('Q')):
+                    break
+                continue
+
+            img_bgr = ensure_bgr(raw_rgb)
+            if img_bgr is None:
+                continue
+
+            # Read TL RGB + DEPTH
+            ok_tl_rgb, raw_tl_rgb = car.get_image(camera=TL_CAM_RGB)
+            ok_tl_d, raw_tl_d = car.get_image(camera=TL_CAM_DEPTH)
+
+            tl_red_seen = False
+            tl_roi_dbg = None
+            tl_mask_dbg = None
+            depth_m = None
+            tl_bgr = None
+
+            if ok_tl_rgb and raw_tl_rgb is not None:
+                tl_bgr = ensure_bgr(raw_tl_rgb)
+                if ok_tl_d and raw_tl_d is not None and tl_bgr is not None:
+                    depth_m = normalize_depth(raw_tl_d)
+                    depth_m = align_depth_to_rgb(depth_m, tl_bgr)
+
+                if tl_bgr is not None:
+                    tl_red_seen, tl_roi_dbg, tl_mask_dbg, _best_dist, _cnt = detect_red_traffic_light_rgbd(tl_bgr, depth_m)
+
+                if tl_roi_dbg is not None:
+                    cv2.imshow(WIN_TL, tl_roi_dbg)
+                if tl_mask_dbg is not None:
+                    cv2.imshow(WIN_TL_MASK, tl_mask_dbg)
+
+            # Stop sign detection (use RGBD stream)
+            ss_seen, ss_box, ss_dist = (False, None, None)
+            if tl_bgr is not None and depth_m is not None:
+                # Arm using CURRENT SEGMENT MODE, not FSM state
+                cur_mode = None
+                if step < len(route_modes):
+                    cur_mode = route_modes[step]  # mode for src->dst
+                armed_stop = (cur_mode in ("Y", "W"))  # change to ("Y",) want only yellow segments
+
+                if armed_stop:
+                    ss_seen, ss_box, ss_dist = detect_stop_sign_rgbd_fast(tl_bgr, depth_m)
+
+                # Show STOP debug window (always show when we have TL rgb)
+                stop_dbg = tl_bgr.copy()
+                if ss_seen and ss_box is not None:
+                    x, y, ww, hh = ss_box
+                    cv2.rectangle(stop_dbg, (x, y), (x + ww, y + hh), (0, 255, 0), 3)
+                    ds = f"{ss_dist:.2f}m" if (ss_dist is not None and math.isfinite(ss_dist)) else "N/A"
+                    cv2.putText(stop_dbg, f"STOP {ds}", (x, max(25, y - 10)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                cv2.putText(stop_dbg, f"armed_stop={int(armed_stop)}  ss_seen={int(ss_seen)}",
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+                cv2.imshow(WIN_STOP, stop_dbg)
+
+            # Common
+            overlay = img_bgr.copy()
+            mask_show = np.zeros((120, 240), dtype=np.uint8)
+            forward_cmd = 0.0
+            turn_cmd = 0.0
+
+            pose = get_pose(car)
+            xy = None
+            if pose is not None:
+                xy = np.array([pose[0], pose[1]], dtype=np.float32)
+
+            left_sig = False
+            right_sig = False
+            now = time.time()
+
+            # -----------------------------
+            # Traffic light debounce + gating
+            # Freeze debounce while waiting to avoid flicker-release
+            # -----------------------------
+            if state != State.TRAFFIC_LIGHT_WAIT:
+                if tl_red_seen:
+                    tl_green_since = None
+                    if tl_red_since is None:
+                        tl_red_since = now
+                else:
+                    tl_red_since = None
+                    if tl_green_since is None:
+                        tl_green_since = now
+
+            red_event = (tl_red_since is not None) and ((now - tl_red_since) >= TL_RED_DEBOUNCE_S)
+            green_event = (tl_green_since is not None) and ((now - tl_green_since) >= TL_GREEN_RELEASE_S)
+
+            crossing, tl_src, tl_dst = on_tl_crossing(step, route_nodes)
+            d_to_dst = None
+            armed_tl = False
+            committed_tl = False
+            if crossing and xy is not None and tl_dst is not None:
+                d_to_dst = dist_to_node_xy(xy, tl_dst)
+                armed_tl = (d_to_dst <= TL_ARM_DIST_M)
+                committed_tl = (d_to_dst <= TL_COMMIT_M) or (state in (State.TURN_LEFT, State.TURN_RIGHT))
+
+            if state not in (State.IDLE, State.STOP_WAIT, State.TRAFFIC_LIGHT_WAIT, State.STOP_SIGN_WAIT):
+                if crossing and armed_tl and red_event and (not committed_tl):
+                    resume_state = state
+                    state = State.TRAFFIC_LIGHT_WAIT
+
+            # -----------------------------
+            # Stop sign trigger
+            # -----------------------------
+            if state not in (State.STOP_SIGN_WAIT, State.TRAFFIC_LIGHT_WAIT, State.STOP_WAIT, State.IDLE):
+                if ss_seen and (now >= stop_cooldown_until):
+                    stop_resume_state = state
+                    stop_hold_until = now + STOP_DURATION_S
+                    stop_cooldown_until = now + STOP_COOLDOWN_S
+                    state = State.STOP_SIGN_WAIT
+
+            # -----------------------------
+            # FSM
+            # -----------------------------
+            if state == State.IDLE:
+                cv2.putText(overlay, "STATE: IDLE (Press R to re-plan)", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
+                car.set_led_strip_uniform(color=[1, 0, 1])
+
+            elif state == State.ROUTE:
+                if step >= len(route_nodes) - 1:
+                    cv2.putText(overlay, "STATE: ROUTE | Mission complete", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
+                    state = State.IDLE
+                    car.set_led_strip_uniform(color=[1, 0, 1])
+                else:
+                    src = route_nodes[step]
+                    dst = route_nodes[step + 1]
+                    mode = route_modes[step]  # W/Y/S/L/R
+                    cv2.putText(overlay, f"STATE: ROUTE | Dispatch {mode} {src}->{dst}", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
+
+                    lost_since = None
+
+                    car.set_led_strip_uniform(color=[0, 1, 0])
+                    if mode == "W":
+                        state = State.WHITE_FOLLOW
+                    elif mode == "Y":
+                        state = State.YELLOW_FOLLOW
+                    elif mode == "L":
+                        state = State.TURN_LEFT
+                        turn_started_t = None
+                        yellow_ok_frames = 0
+                    elif mode == "R":
+                        state = State.TURN_RIGHT
+                        turn_started_t = None
+                        yellow_ok_frames = 0
+                    else:
+                        state = State.STRAIGHT
+
+            elif state == State.WHITE_FOLLOW:
+                y_turn, y_overlay, y_mask, y_status, y_found = yellow_follow_step(img_bgr)
+                if y_found:
+                    turn_cmd, overlay, mask_show, status_line, found = y_turn, y_overlay, y_mask, y_status, True
+                    active_speed = SPEED_YELLOW
+                    active_label = "YELLOW_FOLLOW (auto from WHITE)"
+                else:
+                    turn_cmd, overlay, mask_show, status_line, found = white_follow_step(img_bgr)
+                    active_speed = SPEED_WHITE
+                    active_label = "WHITE_FOLLOW"
+
+                src = route_nodes[step]
+                dst = route_nodes[step + 1]
+                tx, ty, _ = coord_of(dst)
+                target_xy = np.array([tx, ty], dtype=np.float32)
+
+                if found:
+                    lost_since = None
+                    forward_cmd = float(active_speed)
+                else:
+                    if lost_since is None:
+                        lost_since = now
+                    if (now - lost_since) >= LOST_TIMEOUT_S:
+                        forward_cmd = float(LOST_SPEED)
+                        turn_cmd = 0.0
+                    else:
+                        forward_cmd = float(active_speed * 0.5)
+
+                dist_m = None
+                arrived = False
+                if xy is not None:
+                    dist_m = float(np.linalg.norm(xy - target_xy))
+                    arrived = dist_m <= ARRIVE_RADIUS_M
+
+                cv2.putText(overlay, f"STATE: {active_label} | {src}->{dst} | {status_line}", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+                if dist_m is not None:
+                    cv2.putText(overlay, f"to {dst}: {dist_m:.2f} m", (10, 58),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+
+                if arrived:
+                    dst = route_nodes[step + 1]  # node we're entering
+
+                    # ---- HARD-CODE STOP AT A_1 ----
+                    if dst == ("A_1" or "B_2"):
+                        stop_resume_state = State.ROUTE
+                        stop_hold_until = time.time() + 1.0   # <-- 1 second stop
+                        state = State.STOP_SIGN_WAIT
+                    else:
+                        step += 1
+                        if step >= len(route_nodes) - 1:
+                            state = State.IDLE
+                        elif route_nodes[step] in dwell_nodes:
+                            wait_until = time.time() + DWELL_SECONDS
+                            if (hasPassenger == 1):
+                                hasPassenger = 0
+                            else:
+                                hasPassenger = 1
+                            state = State.STOP_WAIT
+                        else:
+                            state = State.ROUTE
+
+            elif state == State.YELLOW_FOLLOW:
+                y_turn, y_overlay, y_mask, y_status, y_found = yellow_follow_step(img_bgr)
+                if y_found:
+                    turn_cmd, overlay, mask_show, status_line, found = y_turn, y_overlay, y_mask, y_status, True
+                    active_speed = SPEED_YELLOW
+                    active_label = "YELLOW_FOLLOW"
+                else:
+                    w_turn, w_overlay, w_mask, w_status, w_found = white_follow_step(img_bgr)
+                    turn_cmd, overlay, mask_show, status_line, found = (
+                        w_turn, w_overlay, w_mask, ("FALLBACK-> " + w_status), w_found
+                    )
+                    active_speed = SPEED_WHITE
+                    active_label = "YELLOW_FOLLOW (fallback WHITE)"
+
+                src = route_nodes[step]
+                dst = route_nodes[step + 1]
+                tx, ty, _ = coord_of(dst)
+                target_xy = np.array([tx, ty], dtype=np.float32)
+
+                if found:
+                    lost_since = None
+                    forward_cmd = float(active_speed)
+                else:
+                    if lost_since is None:
+                        lost_since = now
+                    if (now - lost_since) >= LOST_TIMEOUT_S:
+                        forward_cmd = float(LOST_SPEED)
+                        turn_cmd = 0.0
+                    else:
+                        forward_cmd = float(active_speed * 0.5)
+
+                dist_m = None
+                arrived = False
+                if xy is not None:
+                    dist_m = float(np.linalg.norm(xy - target_xy))
+                    arrived = dist_m <= ARRIVE_RADIUS_M
+
+                cv2.putText(overlay, f"STATE: {active_label} | {src}->{dst} | {status_line}", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+                if dist_m is not None:
+                    cv2.putText(overlay, f"to {dst}: {dist_m:.2f} m", (10, 58),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+
+                if arrived:
+                    step += 1
+                    if step >= len(route_nodes) - 1:
+                        state = State.IDLE
+                    elif route_nodes[step] in dwell_nodes:
+                        wait_until = time.time() + DWELL_SECONDS
+                        if (hasPassenger == 1):
+                            hasPassenger = 0
+                        else:
+                            hasPassenger = 1
+                        state = State.STOP_WAIT
+                    else:
+                        state = State.ROUTE
+
+            elif state == State.STRAIGHT:
+                src = route_nodes[step]
+                dst = route_nodes[step + 1]
+                tx, ty, _ = coord_of(dst)
+                target_xy = np.array([tx, ty], dtype=np.float32)
+
+                if xy is None or pose is None:
+                    forward_cmd = 0.0
+                    turn_cmd = 0.0
+                    cv2.putText(overlay, "STATE: STRAIGHT | Pose unavailable!", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+                else:
+                    yaw = float(pose[2])
+                    dx = float(target_xy[0] - xy[0])
+                    dy = float(target_xy[1] - xy[1])
+                    dist_m = float(math.sqrt(dx * dx + dy * dy))
+                    desired = math.atan2(dy, dx)
+                    yaw_err = math.atan2(math.sin(desired - yaw), math.cos(desired - yaw))
+
+                    K = 1.2
+                    turn_cmd = float(np.clip(-K * yaw_err, -STEER_CLIP, STEER_CLIP))
+
+                    if abs(yaw_err) > 1.0:
+                        forward_cmd = 0.8
+                    elif abs(yaw_err) > 0.5:
+                        forward_cmd = 1.4
+                    else:
+                        forward_cmd = float(SPEED_STRAIGHT)
+
+                    cv2.putText(overlay, f"STATE: STRAIGHT | {src}->{dst}", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
+                    cv2.putText(overlay, f"to {dst}: {dist_m:.2f} m | err:{yaw_err:+.2f} rad | turn:{turn_cmd:+.3f}",
+                                (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+
+                    if dist_m <= ARRIVE_RADIUS_M:
+                        step += 1
+                        if step >= len(route_nodes) - 1:
+                            state = State.IDLE
+                        elif route_nodes[step] in dwell_nodes:
+                            wait_until = time.time() + DWELL_SECONDS
+                            if (hasPassenger == 1):
+                                hasPassenger = 0
+                            else:
+                                hasPassenger = 1
+                            state = State.STOP_WAIT
+                        else:
+                            state = State.ROUTE
+
+            elif state in (State.TURN_LEFT, State.TURN_RIGHT):
+                y_turn, y_overlay, y_mask, y_status, y_found = yellow_follow_step(img_bgr)
+                if y_found:
+                    yellow_ok_frames += 1
+                else:
+                    yellow_ok_frames = 0
+
+                if turn_started_t is None:
+                    turn_started_t = time.time()
+                dt = time.time() - turn_started_t
+
+                if dt >= TURN_MIN_SECONDS and yellow_ok_frames >= REACQUIRE_FRAMES:
+                    state = State.YELLOW_FOLLOW
+                    turn_cmd, overlay, mask_show = y_turn, y_overlay, y_mask
+                    forward_cmd = float(SPEED_YELLOW)
+                    lost_since = None
+                else:
+                    forward_cmd = float(SPEED_TURN)
+                    if state == State.TURN_LEFT:
+                        turn_cmd = float(np.clip(TURN_LEFT_STEER, -STEER_CLIP, STEER_CLIP))
+                        left_sig, right_sig = True, False
+                        label = "TURN_LEFT"
+                    else:
+                        turn_cmd = float(np.clip(TURN_RIGHT_STEER, -STEER_CLIP, STEER_CLIP))
+                        left_sig, right_sig = False, True
+                        label = "TURN_RIGHT"
+
+                    overlay = y_overlay
+                    mask_show = y_mask
+
+                    src = route_nodes[step]
+                    dst = route_nodes[step + 1]
+                    cv2.putText(overlay, f"STATE: {label} | {src}->{dst} | {y_status}",
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+                    cv2.putText(overlay, f"turn dt={dt:.2f}s reacq={yellow_ok_frames}/{REACQUIRE_FRAMES}",
+                                (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
+
+            elif state == State.STOP_WAIT:
+                forward_cmd = 0.0
+                turn_cmd = 0.0
+                here = route_nodes[step]
+                if (hasPassenger == 0):
+                    car.set_led_strip_uniform(color=[0, 0, 1])
+                elif (hasPassenger == 1):
+                    car.set_led_strip_uniform(color=[1, 1, 0])
+                remaining = max(0.0, (wait_until - time.time()) if wait_until is not None else 0.0)
+                cv2.putText(overlay, f"STATE: STOP_WAIT at {here} | {remaining:.1f}s left", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
+                if wait_until is not None and time.time() >= wait_until:
+                    wait_until = None
+                    state = State.ROUTE
+
+            elif state == State.TRAFFIC_LIGHT_WAIT:
+                forward_cmd = 0.0
+                turn_cmd = 0.0
+                d_txt = ""
+                if crossing and xy is not None and tl_dst is not None:
+                    d_txt = f" | d_to_{tl_dst}={dist_to_node_xy(xy, tl_dst):.2f}m"
+
+                cv2.putText(overlay, f"STATE: TRAFFIC_LIGHT_WAIT | red_seen={int(tl_red_seen)}{d_txt}",
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+
+                # Update green debounce while waiting (release logic)
+                if not tl_red_seen:
+                    if tl_green_since is None:
+                        tl_green_since = now
+                else:
+                    tl_green_since = None
+
+                green_event = (tl_green_since is not None) and ((now - tl_green_since) >= TL_GREEN_RELEASE_S)
+                if green_event:
+                    state = resume_state if resume_state is not None else State.ROUTE
+                    resume_state = None
+                    tl_red_since = None
+                    tl_green_since = None
+
+            elif state == State.STOP_SIGN_WAIT:
+                forward_cmd = 0.0
+                turn_cmd = 0.0
+                remaining = max(0.0, (stop_hold_until - time.time()) if stop_hold_until else 0.0)
+                cv2.putText(overlay, f"STATE: STOP_SIGN_WAIT | {remaining:.1f}s",
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2)
+                if stop_hold_until is not None and time.time() >= stop_hold_until:
+                    stop_hold_until = None
+
+                    # advance into the node AFTER stopping
+                    step += 1
+
+                    state = State.ROUTE
+
+            mission_str = " -> ".join(route_nodes) if route_nodes else "(no route)"
+            cv2.putText(overlay, f"Mission: {mission_str}", (10, overlay.shape[0] - 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 1)
+
+            braking = (state == State.TRAFFIC_LIGHT_WAIT) or (state == State.STOP_SIGN_WAIT)
+
+            car.set_velocity_and_request_state(
+                forward=float(forward_cmd),
+                turn=float(np.clip(turn_cmd, -STEER_CLIP, STEER_CLIP)),
+                headlights=False,
+                leftTurnSignal=left_sig,
+                rightTurnSignal=right_sig,
+                brakeSignal=braking,
+                reverseSignal=False
+            )
+
+            cv2.imshow(WINDOW, overlay)
+            cv2.imshow(WIN_MASK, mask_show)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key in (27, ord('q'), ord('Q')):
+                break
+            elif key in (ord('t'), ord('T')):
+                SOURCE_IS_RGB = not SOURCE_IS_RGB
+                print("SOURCE_IS_RGB =", SOURCE_IS_RGB)
+            elif key in (ord('s'), ord('S')):
+                state = State.IDLE
+                route_nodes = []
+                route_modes = []
+                step = 0
+                wait_until = None
+                lost_since = None
+                turn_started_t = None
+                yellow_ok_frames = 0
+                print("Stopped. (IDLE)")
+            elif key in (ord('r'), ord('R')):
+                pickup, dropoff = ask_pick_drop(graph)
+                route_nodes, route_modes = plan_full_route(graph, pickup, dropoff)
+                dwell_nodes = {pickup, dropoff}
+                step = 0
+                wait_until = None
+                lost_since = None
+                turn_started_t = None
+                yellow_ok_frames = 0
+                state = State.ROUTE
+                print("Mission:", " -> ".join(route_nodes))
+
+            time.sleep(0.02)
+
+    finally:
+        try:
+            car.set_velocity_and_request_state(
+                forward=0.0, turn=0.0,
+                headlights=False, leftTurnSignal=False, rightTurnSignal=False,
+                brakeSignal=True, reverseSignal=False
+            )
+        except Exception:
+            pass
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+        try:
+            qlabs.close()
+        except Exception:
+            pass
+
+if __name__ == "__main__":
+    main()

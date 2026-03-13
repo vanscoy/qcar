@@ -44,6 +44,10 @@ WHITE_MIN_AREA_PX = 650
 WHITE_MIN_ASPECT = 2.0
 WHITE_MIN_WIDTH_FRAC = 0.25
 WHITE_BOTTOM_MARGIN_PX = 3
+WHITE_MAX_HEIGHT_FRAC = 0.12
+WHITE_MAX_ANGLE_DEG = 20.0
+WHITE_TOUCH_BAND_PX = 8
+WHITE_MIN_BOTTOM_CONTACT_FRAC = 0.45
 
 # ===================== Hardcoded turns =====================
 LEFT_TURN_SPEED = 0.075
@@ -285,35 +289,76 @@ def get_line_info_bottom(image_bgr):
 
 
 def detect_horizontal_white_line_bottom(image_bgr):
-    """Detect horizontal white contour near the bottom of the frame."""
+    """Detect a horizontal white stop line that touches the image bottom."""
+    # Full-frame image size (pixels).
     h, w, _ = image_bgr.shape
+
+    # Only search in the lower part of the frame to reduce false detections.
+    # y0 is the row index where this ROI starts in the ORIGINAL image coordinates.
     y0 = int(h * WHITE_ROI_TOP_FRAC)
     roi = image_bgr[y0:h, 0:w]
 
+    # White threshold in HSV: low saturation + high value.
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, (0, 0, 185), (179, 55, 255))
+
+    # Morphology removes speckle noise and bridges small gaps in the line.
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL5, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL5, iterations=1)
 
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     best_bbox = None
     best_area = 0.0
+    roi_h = roi.shape[0]
 
     for c in cnts:
         area = cv2.contourArea(c)
+        # Ignore tiny blobs.
         if area < WHITE_MIN_AREA_PX:
             continue
 
+        # NOTE: x,y,cw,ch are in ROI coordinates (not full-frame yet).
         x, y, cw, ch = cv2.boundingRect(c)
         if ch <= 0:
             continue
 
+        # Reject tall structures; a stop line should be thin vertically.
+        if ch > int(WHITE_MAX_HEIGHT_FRAC * h):
+            continue
+
+        # Horizontal lines should be much wider than tall.
         aspect = float(cw) / float(ch)
         if aspect < WHITE_MIN_ASPECT:
             continue
 
+        # Estimate contour orientation from PCA; keep only near-horizontal shapes.
+        pts = c.reshape(-1, 2).astype(np.float32)
+        if pts.shape[0] < 2:
+            continue
+        centered = pts - pts.mean(axis=0, keepdims=True)
+        cov = np.cov(centered.T)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        main_vec = eigvecs[:, int(np.argmax(eigvals))]
+        angle_deg = abs(float(np.degrees(np.arctan2(main_vec[1], main_vec[0]))))
+        if angle_deg > 90.0:
+            angle_deg = 180.0 - angle_deg
+        if angle_deg > WHITE_MAX_ANGLE_DEG:
+            continue
+
+        # Require meaningful contact along the bottom band, not just a point touch.
+        contour_mask = np.zeros_like(mask)
+        cv2.drawContours(contour_mask, [c], -1, 255, thickness=cv2.FILLED)
+        bottom_band_start = max(0, roi_h - WHITE_BOTTOM_MARGIN_PX - WHITE_TOUCH_BAND_PX)
+        bottom_band = contour_mask[bottom_band_start:roi_h, :]
+        contact_cols = np.where(np.any(bottom_band > 0, axis=0))[0]
+        contact_width_px = int(contact_cols.size)
+        bottom_contact_frac = float(contact_width_px) / float(max(cw, 1))
+        if bottom_contact_frac < WHITE_MIN_BOTTOM_CONTACT_FRAC:
+            continue
+
         if area > best_area:
             best_area = area
+            # Convert y from ROI coordinates -> full-frame coordinates by adding y0.
             best_bbox = (x, y + y0, cw, ch)
 
     if best_bbox is None:
@@ -326,7 +371,15 @@ def detect_horizontal_white_line_bottom(image_bgr):
         }
 
     x, y, cw, ch = best_bbox
+
+    # "Decently long" means contour width is >= 25% of full image width.
     is_decently_long = cw >= int(WHITE_MIN_WIDTH_FRAC * w)
+
+    # Bottom-touch test (full-frame coordinates):
+    # - y + ch is the contour's bottom edge row index.
+    # - h is the image height (last valid row is h-1).
+    # If contour bottom is within WHITE_BOTTOM_MARGIN_PX of the image bottom,
+    # treat it as touching the bottom of the screen.
     touches_bottom = (y + ch) >= (h - WHITE_BOTTOM_MARGIN_PX)
 
     return {

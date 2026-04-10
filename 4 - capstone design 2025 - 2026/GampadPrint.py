@@ -30,6 +30,8 @@ TRIGGER_ATTRS = {
 
 STICK_DEADZONE = 0.4
 TRIGGER_DEADZONE = 0.2
+CONTROLLER_INDICES = (1, 2, 3, 4)
+WAIT_MESSAGE_INTERVAL = 3.0
 
 
 def is_trackable_value(value):
@@ -107,13 +109,31 @@ def get_stick_directions(gamepad):
 	return directions
 
 
-gpad = gamepadViaTarget(1)
+def connect_gamepads(indices):
+	controllers = []
+	for index in indices:
+		try:
+			gamepad = gamepadViaTarget(index)
+			gamepad.read()
+		except Exception as exc:
+			print(f"Controller {index}: unavailable ({exc})")
+			continue
 
-gpad.read()
-previous_button_states = get_button_states(gpad)
-previous_trigger_states = get_trigger_states(gpad)
-previous_stick_directions = get_stick_directions(gpad)
-previous_snapshot = get_gamepad_snapshot(gpad)
+		controllers.append(
+			{
+				"index": index,
+				"gamepad": gamepad,
+				"previous_button_states": get_button_states(gamepad),
+				"previous_trigger_states": get_trigger_states(gamepad),
+				"previous_stick_directions": get_stick_directions(gamepad),
+				"previous_snapshot": get_gamepad_snapshot(gamepad),
+			}
+		)
+		print(f"Controller {index}: listening")
+	return controllers
+
+
+controllers = connect_gamepads(CONTROLLER_INDICES)
 
 known_attrs = set(BUTTON_ATTRS.values())
 known_attrs.update(TRIGGER_ATTRS.values())
@@ -122,59 +142,79 @@ for horizontal_attr, vertical_attr in STICK_ATTRS.values():
 	known_attrs.add(vertical_attr)
 
 activity_detected = False
+last_wait_message_time = time.time()
 
 print("Press a button")
 print("Waiting for controller input...")
 
 try:
 	while True:
-		gpad.read()
-		current_button_states = get_button_states(gpad)
-		current_trigger_states = get_trigger_states(gpad)
-		current_stick_directions = get_stick_directions(gpad)
-		current_snapshot = get_gamepad_snapshot(gpad)
 		loop_activity_detected = False
+		for controller in controllers:
+			gamepad = controller["gamepad"]
+			gamepad.read()
+			current_button_states = get_button_states(gamepad)
+			current_trigger_states = get_trigger_states(gamepad)
+			current_stick_directions = get_stick_directions(gamepad)
+			current_snapshot = get_gamepad_snapshot(gamepad)
+			controller_activity_detected = False
 
-		for button_name, is_pressed in current_button_states.items():
-			if is_pressed and not previous_button_states.get(button_name, False):
-				print(button_name)
-				loop_activity_detected = True
+			for button_name, is_pressed in current_button_states.items():
+				if is_pressed and not controller["previous_button_states"].get(button_name, False):
+					print(f"[Controller {controller['index']}] {button_name}")
+					controller_activity_detected = True
 
-		for trigger_name, is_pressed in current_trigger_states.items():
-			if is_pressed and not previous_trigger_states.get(trigger_name, False):
-				print(trigger_name)
-				loop_activity_detected = True
+			for trigger_name, is_pressed in current_trigger_states.items():
+				if is_pressed and not controller["previous_trigger_states"].get(trigger_name, False):
+					print(f"[Controller {controller['index']}] {trigger_name}")
+					controller_activity_detected = True
 
-		for stick_name, direction in current_stick_directions.items():
-			if direction != previous_stick_directions.get(stick_name) and direction != "Centered":
-				print(f"{stick_name} pointed {direction}")
-				loop_activity_detected = True
+			for stick_name, direction in current_stick_directions.items():
+				if direction != controller["previous_stick_directions"].get(stick_name) and direction != "Centered":
+					print(f"[Controller {controller['index']}] {stick_name} pointed {direction}")
+					controller_activity_detected = True
 
-		for attr_name in sorted(current_snapshot):
-			previous_value = previous_snapshot.get(attr_name)
-			current_value = current_snapshot[attr_name]
-			if previous_value is None:
-				continue
-			if not values_differ(previous_value, current_value):
-				continue
-			if not activity_detected:
-				print("Controller signal detected")
+			for attr_name in sorted(current_snapshot):
+				previous_value = controller["previous_snapshot"].get(attr_name)
+				current_value = current_snapshot[attr_name]
+				if previous_value is None:
+					continue
+				if not values_differ(previous_value, current_value):
+					continue
+				if not activity_detected:
+					print(f"Controller signal detected on controller {controller['index']}")
+					activity_detected = True
+				if attr_name not in known_attrs:
+					print(
+						f"[Controller {controller['index']}] Unidentified input: {attr_name}: {previous_value} -> {current_value}"
+					)
+					controller_activity_detected = True
+
+			if controller_activity_detected and not activity_detected:
+				print(f"Controller signal detected on controller {controller['index']}")
 				activity_detected = True
-			if attr_name not in known_attrs:
-				print(f"Unidentified input: {attr_name}: {previous_value} -> {current_value}")
+			if controller_activity_detected:
 				loop_activity_detected = True
 
-		if loop_activity_detected and not activity_detected:
-			print("Controller signal detected")
-			activity_detected = True
+			controller["previous_button_states"] = current_button_states
+			controller["previous_trigger_states"] = current_trigger_states
+			controller["previous_stick_directions"] = current_stick_directions
+			controller["previous_snapshot"] = current_snapshot
 
-		previous_button_states = current_button_states
-		previous_trigger_states = current_trigger_states
-		previous_stick_directions = current_stick_directions
-		previous_snapshot = current_snapshot
+		if not loop_activity_detected and time.time() - last_wait_message_time >= WAIT_MESSAGE_INTERVAL:
+			if controllers:
+				controller_list = ", ".join(str(controller["index"]) for controller in controllers)
+				print(f"No controller input detected yet on controller indices: {controller_list}")
+			else:
+				print("No controller interfaces are available")
+			last_wait_message_time = time.time()
+		elif loop_activity_detected:
+			last_wait_message_time = time.time()
+
 		time.sleep(0.01)
 
 except KeyboardInterrupt:
 	print("User interrupted!")
 finally:
-	gpad.terminate()
+	for controller in controllers:
+		controller["gamepad"].terminate()

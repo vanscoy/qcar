@@ -271,8 +271,8 @@ def make_pink_mask(roi):
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
     # Broader pink/magenta range in HSV.
-    m1 = cv2.inRange(hsv, (125, 40, 70), (179, 255, 255))
-    m2 = cv2.inRange(hsv, (135, 20, 120), (179, 170, 255))
+    m1 = cv2.inRange(hsv, (120, 25, 50), (179, 255, 255))
+    m2 = cv2.inRange(hsv, (135, 10, 90), (179, 200, 255))
     mask_hsv = cv2.bitwise_or(m1, m2)
 
     white_glare = cv2.inRange(hsv, (0, 0, 220), (180, 60, 255))
@@ -281,8 +281,8 @@ def make_pink_mask(roi):
     # Pink also tends to be strong on the LAB "a" channel.
     lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
     a_channel = lab[:, :, 1]
-    _, a_bin = cv2.threshold(a_channel, 150, 255, cv2.THRESH_BINARY)
-    mask = cv2.bitwise_and(mask, a_bin)
+    _, a_bin = cv2.threshold(a_channel, 145, 255, cv2.THRESH_BINARY)
+    mask = cv2.bitwise_or(mask, a_bin)
 
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL, iterations=1)
@@ -353,6 +353,7 @@ def main():
     run_t0 = None
     speed_samples = []
     line_phase = "PINK_PRIORITY"
+    pink_acquired = False
 
     if not HEADLESS:
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
@@ -409,12 +410,11 @@ Controls:
                 if pink_info is not None:
                     info, mask = pink_info, pink_mask
                     active_line = "PINK"
-                elif yellow_info is not None:
-                    line_phase = "YELLOW_LOCK"
-                    info, mask = yellow_info, yellow_mask
-                    active_line = "YELLOW"
-                else:
+                    pink_acquired = True
+                elif pink_acquired:
                     line_phase = "SEARCH_YELLOW"
+                    info, mask = None, yellow_mask
+                else:
                     info, mask = None, pink_mask
             elif line_phase == "SEARCH_YELLOW":
                 if yellow_info is not None:
@@ -554,6 +554,7 @@ Controls:
                     run_t0 = time.time()
                     running = True
                     line_phase = "PINK_PRIORITY"
+                    pink_acquired = False
                     print(
                         f"[Run] START line follow (pink priority, then yellow lock) | "
                         f"speed={speed:.3f} | target_offset_right={target_offset_right}"

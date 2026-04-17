@@ -1,313 +1,284 @@
 #!/usr/bin/env python3
-# QCar yellow/pink-line follower with encoder distance
-#
-# Goal:
-# - Follow either the pink or yellow line
-# - If both are visible, prioritize the pink line
-# - Continuously show encoder distance traveled
-# - Press S to start following
-# - Press X to stop and save the run
-# - Repeat as many times as you want
+# QCar encoder logger with:
+#   - line follow mode
+#   - hardcoded left turn mode
+#   - hardcoded right turn mode
 #
 # Controls:
-#   S : start line follow (pink priority, yellow fallback)
-#   X : stop line follow and save result
-#   R : reset odometry
-#   A : move target 20 px more left
-#   D : move target 20 px more right
-#   Z : decrease speed by 0.002
-#   C : increase speed by 0.002
-#   Q : neutral stop
-#   ESC : quit
+#   F     : select LINE FOLLOW mode
+#   L     : select LEFT TURN mode
+#   R     : select RIGHT TURN mode
+#   S     : start run
+#   X     : stop run and save summary
+#   Q     : neutral / stop motors
+#   T     : reset odometry baseline
+#   C     : reset camera
+#   ESC   : quit
 
 from Quanser.product_QCar import QCar
 from Quanser.q_essential import Camera3D
-import cv2, time, numpy as np
-import threading, os, sys
+import numpy as np
+import cv2
+import time
 from math import pi
+import enum
 
-# ========================= Tunables =========================
-HEADLESS = False
-
-# Vision ROI
-bottom_frac = 0.40
-band_frac   = 0.20
+# ===================== Line-follow tunables =====================
+BOTTOM_FRAC = 0.40
+BAND_FRAC = 0.20
 MIN_BAND_PTS = 30
-MIN_CONTOUR_AREA = 50
 
-# Control
-target_offset_right = 1000
-speed = 0.078
-steering_gain = 0.0012
-max_steering_angle = 28.0
-STEER_CMD_CLIP = 0.5
+TARGET_OFFSET_RIGHT = 1000
+SPEED_BASE = 0.078
+STEER_GAIN = 0.0012
+STEER_CLIP = 0.5
+MAX_STEER_ANGLE_DEG = 28.0
 
-# Camera
-FRAME_W, FRAME_H, FRAME_FPS = 1280, 720, 20.0
+KERNEL5 = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
 
-# Morphology
-KERNEL = np.ones((5,5), np.uint8)
+# ===================== Hardcoded turns =====================
+LEFT_TURN_SPEED = 0.075
+LEFT_TURN_STEER = 0.16
 
-# Watchdogs
-MAX_FRAME_AGE_S   = 0.25
-STALE_MAX_FRAMES  = 8
-MAX_LOOP_TIME_S   = 0.20
-RESET_COOLDOWN_S  = 1.0
-MAX_ESCALATION    = 3
+RIGHT_TURN_SPEED = 0.075
+RIGHT_TURN_STEER = -0.21
 
-# Encoder / odometry
+# ===================== Encoder / odometry params =====================
 TICKS_PER_REV = 31844.0
-WHEEL_DIAM_M  = 0.066
-WHEEL_CIRC_M  = pi * WHEEL_DIAM_M
-EMA_ALPHA     = 0.35
-DT_MIN, DT_MAX = 0.004, 0.35
-MPS_HARD_MAX  = 6.0
+WHEEL_DIAM_M = 0.066
+WHEEL_CIRC_M = pi * WHEEL_DIAM_M
 
-# Logging
-WINDOW = "Yellow/Pink Follow + Distance"
-MASK_WINDOW = "Active Line Mask"
-LOG_FILE = "yellow_follow_distance_log.txt"
+EMA_ALPHA = 0.35
+DT_MIN = 0.004
+DT_MAX = 0.35
+MPS_HARD_MAX = 6.0
 
-frame_count, fps, last_time = 0, 0, time.time()
+# ===================== Logging =====================
+SAMPLES_LOG = "segment_encoder_samples.txt"
+SUMMARY_LOG = "segment_encoder_summary.txt"
+TEST_LABEL = "segment_encoder_v2"
 
-# ========================= Safe camera stop =========================
-def safe_terminate_camera3d(cam):
-    if cam is None:
-        return
-    for name in ("terminate_RGB", "stop_RGB", "stop_rgb", "stop"):
-        if hasattr(cam, name):
+SAMPLE_DT = 0.05
+SETTLE_S = 1.2
+
+# ===================== Display =====================
+WINDOW = "QCar Segment Encoder Logger"
+HUD_X, HUD_Y, HUD_DY = 10, 30, 30
+
+
+class RunMode(enum.Enum):
+    LINE_FOLLOW = 0
+    LEFT_TURN = 1
+    RIGHT_TURN = 2
+
+
+# ---------------------------------------------------------------------
+# Camera wrapper
+# ---------------------------------------------------------------------
+class SafeCamera3D:
+    def __init__(
+        self,
+        mode='RGB',
+        frame_width=1280,
+        frame_height=720,
+        frame_rate=20.0,
+        device_id='0',
+        fail_reset_threshold=8,
+        max_no_good_secs=2.5,
+        verbose=True
+    ):
+        self.mode = mode
+        self.w = frame_width
+        self.h = frame_height
+        self.fps = frame_rate
+        self.dev = device_id
+        self.fail_reset_threshold = fail_reset_threshold
+        self.max_no_good_secs = max_no_good_secs
+        self.verbose = verbose
+
+        self.cam = None
+        self._consec_fail = 0
+        self._last_good_ts = 0.0
+        self._init_cam()
+
+    def _log(self, *a):
+        if self.verbose:
+            print("[SafeCamera3D]", *a)
+
+    def _safe_terminate(self, cam):
+        for name in ("terminate_RGB", "stop_RGB", "stop_rgb", "stop"):
+            if hasattr(cam, name):
+                try:
+                    getattr(cam, name)()
+                except Exception:
+                    pass
+        try:
+            cam.terminate()
+        except AttributeError as e:
+            if "video3d" not in str(e):
+                raise
+        except Exception:
+            pass
+
+    def _init_cam(self):
+        if self.cam is not None:
             try:
-                getattr(cam, name)()
+                self._safe_terminate(self.cam)
             except Exception:
                 pass
-    try:
-        cam.terminate()
-    except AttributeError as e:
-        if "video3d" not in str(e):
-            raise
-    except Exception:
-        pass
 
-# ========================= Frame grabber =========================
-class FrameGrabber:
-    def __init__(self):
-        self.cam = None
-        self.lock = threading.Lock()
-        self.frame = None
-        self.running = False
-        self.last_ck = None
-        self.stale_count = 0
-        self.last_good_t = time.time()
-        self.last_reset_attempt = 0.0
-        self.thread = None
-
-    def _open_cam(self):
+        self._log(f"Init Camera3D {self.mode} {self.w}x{self.h}@{self.fps} dev={self.dev}")
         self.cam = Camera3D(
-            mode='RGB',
-            frame_width_RGB=FRAME_W,
-            frame_height_RGB=FRAME_H,
-            frame_rate_RGB=FRAME_FPS,
-            device_id='0'
+            mode=self.mode,
+            frame_width_RGB=self.w,
+            frame_height_RGB=self.h,
+            frame_rate_RGB=self.fps,
+            device_id=self.dev
         )
 
-    def start(self):
-        self._open_cam()
-        self.running = True
-        self.thread = threading.Thread(target=self._loop, daemon=True)
-        self.thread.start()
+        self._consec_fail = 0
+        self._last_good_ts = 0.0
 
-    def stop(self):
-        self.running = False
         try:
-            if self.thread:
-                self.thread.join(timeout=0.5)
-        except Exception:
-            pass
-        try:
-            safe_terminate_camera3d(self.cam)
-        except Exception:
-            pass
-        self.cam = None
-
-    def _checksum(self, img):
-        thumb = cv2.resize(img, (64, 36), interpolation=cv2.INTER_AREA)
-        return hash(thumb.tobytes())
-
-    def _soft_reset_ok(self):
-        return (time.time() - self.last_reset_attempt) >= RESET_COOLDOWN_S
-
-    def _soft_reset(self):
-        if not self._soft_reset_ok():
-            return False
-        self.last_reset_attempt = time.time()
-        try:
-            safe_terminate_camera3d(self.cam)
-        except Exception:
-            pass
-        try:
-            self._open_cam()
-            self.last_ck = None
-            self.stale_count = 0
-            self.last_good_t = time.time()
-            return True
-        except Exception:
-            return False
-
-    def _loop(self):
-        while self.running:
-            try:
+            if "RGB" in self.mode:
                 self.cam.read_RGB()
-                img = self.cam.image_buffer_RGB
-                if img is not None and img.size != 0:
-                    ck = self._checksum(img)
-                    if self.last_ck is not None and ck == self.last_ck:
-                        self.stale_count += 1
-                    else:
-                        self.stale_count = 0
-                        self.last_good_t = time.time()
-                    self.last_ck = ck
-                    with self.lock:
-                        self.frame = img.copy()
-            except Exception:
-                pass
-            time.sleep(0.001)
+            rgb = getattr(self.cam, "image_buffer_RGB", None)
+            if self._is_valid(rgb):
+                self._last_good_ts = time.time()
+                self._log("Warm-up OK.")
+        except Exception:
+            self._log("Warm-up read failed (will recover).")
 
-    def get_frame(self):
-        too_old = (time.time() - self.last_good_t) > MAX_FRAME_AGE_S
-        too_stale = self.stale_count >= STALE_MAX_FRAMES
-        if too_old or too_stale:
-            self._soft_reset()
-        with self.lock:
-            return None if self.frame is None else self.frame.copy()
-
-# ========================= QCar helpers =========================
-def neutral_brake(car):
-    try:
-        car.read_write_std(
-            np.array([0.0, 0.0], dtype=np.float64),
-            np.array([1,0,0,0, 1,0,0,0], dtype=np.float64)
+    @staticmethod
+    def _is_valid(img):
+        return (
+            img is not None
+            and hasattr(img, "shape")
+            and len(img.shape) == 3
+            and img.shape[0] > 0
+            and img.shape[1] > 0
         )
-    except Exception:
-        pass
 
-def reopen_qcar(car):
-    try:
-        car.terminate()
-    except Exception:
-        pass
-    try:
-        return QCar()
-    except Exception:
+    def _needs_reset(self):
+        if self._consec_fail >= self.fail_reset_threshold:
+            return True
+        if self._last_good_ts and (time.time() - self._last_good_ts) > self.max_no_good_secs:
+            return True
+        return False
+
+    def read(self):
+        try:
+            if "RGB" in self.mode:
+                self.cam.read_RGB()
+
+            rgb = getattr(self.cam, "image_buffer_RGB", None)
+            if self._is_valid(rgb):
+                self._consec_fail = 0
+                self._last_good_ts = time.time()
+                return rgb
+            else:
+                self._consec_fail += 1
+                if self._needs_reset():
+                    self._log("Invalid RGB frames. Resetting stream...")
+                    self._init_cam()
+        except Exception as e:
+            self._consec_fail += 1
+            self._log(f"read() exception: {e}")
+            if self._needs_reset():
+                self._log("Exceptions persisted. Resetting stream...")
+                self._init_cam()
+
         return None
 
-# ========================= Odometry =========================
-def read_ticks(qcar) -> float:
-    return float(qcar.read_encoder())
+    def force_reset(self):
+        self._log("Force reset.")
+        self._init_cam()
 
-class SpeedOdom:
-    def __init__(self, alpha=EMA_ALPHA):
-        self.alpha = alpha
-        self.v_filt = 0.0
-        self.total_dist = 0.0
-        self.prev_ticks = None
-        self.prev_t = None
+    def terminate(self):
+        if self.cam is not None:
+            try:
+                self._safe_terminate(self.cam)
+            except Exception:
+                pass
+            self.cam = None
+            self._log("Camera terminated.")
 
-    def reset(self, qcar):
-        self.prev_ticks = read_ticks(qcar)
-        self.prev_t = time.time()
-        self.v_filt = 0.0
-        self.total_dist = 0.0
 
-    def update(self, qcar):
-        now = time.time()
-        if self.prev_t is None:
-            self.reset(qcar)
-            return 0.0, 0.0, 0.0, 0.0
-
-        dt = max(1e-3, now - self.prev_t)
-        ticks_now = read_ticks(qcar)
-        d_ticks = ticks_now - self.prev_ticks
-
-        self.prev_ticks = ticks_now
-        self.prev_t = now
-
-        dist = (d_ticks / TICKS_PER_REV) * WHEEL_CIRC_M
-        v = dist / dt
-
-        if dt < DT_MIN or dt > DT_MAX or abs(v) > MPS_HARD_MAX:
-            v = self.v_filt
-
-        self.total_dist += abs(dist)
-        self.v_filt = self.alpha * v + (1.0 - self.alpha) * self.v_filt
-        return v, self.v_filt, self.total_dist, dt
-
-# ========================= Line detection =========================
-def make_yellow_mask(roi):
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+# ---------------------------------------------------------------------
+# Yellow/pink line follower helpers
+# ---------------------------------------------------------------------
+def make_yellow_mask(roi_bgr):
+    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
 
     lower1 = (15, 90, 80)
     upper1 = (45, 255, 255)
+
     lower2 = (15, 40, 60)
     upper2 = (45, 255, 200)
 
     m1 = cv2.inRange(hsv, lower1, upper1)
     m2 = cv2.inRange(hsv, lower2, upper2)
-    mask_hsv = cv2.bitwise_or(m1, m2)
+    mask = cv2.bitwise_or(m1, m2)
 
     white_glare = cv2.inRange(hsv, (0, 0, 220), (180, 60, 255))
-    mask = cv2.bitwise_and(mask_hsv, cv2.bitwise_not(white_glare))
+    mask = cv2.bitwise_and(mask, cv2.bitwise_not(white_glare))
 
-    lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+    lab = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2LAB)
     _, b_bin = cv2.threshold(lab[:, :, 2], 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     mask = cv2.bitwise_and(mask, b_bin)
 
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL, iterations=1)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL5, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL5, iterations=1)
     return mask
 
 
-def make_pink_mask(roi):
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+def make_pink_mask(roi_bgr):
+    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
 
-    # Normal pink/magenta range in HSV.
-    m1 = cv2.inRange(hsv, (140, 70, 70), (179, 255, 255))
-    m2 = cv2.inRange(hsv, (150, 40, 120), (179, 200, 255))
-    mask_hsv = cv2.bitwise_or(m1, m2)
+    m1 = cv2.inRange(hsv, (120, 25, 50), (179, 255, 255))
+    m2 = cv2.inRange(hsv, (135, 10, 90), (179, 200, 255))
+    mask = cv2.bitwise_or(m1, m2)
 
     white_glare = cv2.inRange(hsv, (0, 0, 220), (180, 60, 255))
-    mask = cv2.bitwise_and(mask_hsv, cv2.bitwise_not(white_glare))
+    mask = cv2.bitwise_and(mask, cv2.bitwise_not(white_glare))
 
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL, iterations=1)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL, iterations=1)
+    lab = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2LAB)
+    _, a_bin = cv2.threshold(lab[:, :, 1], 145, 255, cv2.THRESH_BINARY)
+    mask = cv2.bitwise_or(mask, a_bin)
+
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL5, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL5, iterations=1)
     return mask
 
 
-def get_line_info_bottom(image, mask_builder):
-    h, w, _ = image.shape
-    y0 = int(h * (1.0 - bottom_frac))
-    roi = image[y0:h, 0:w]
+def get_line_info_bottom(image_bgr, mask_builder):
+    h, w, _ = image_bgr.shape
+    y0 = int(h * (1.0 - BOTTOM_FRAC))
+    roi = image_bgr[y0:h, 0:w]
 
     mask = mask_builder(roi)
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
     if not cnts:
         return None, mask
 
     largest = max(cnts, key=cv2.contourArea)
-    if cv2.contourArea(largest) < MIN_CONTOUR_AREA:
+    if cv2.contourArea(largest) < 50:
         return None, mask
 
     pts = largest.reshape(-1, 2)
     roi_h = roi.shape[0]
-    band_y_start = int(roi_h * (1.0 - band_frac))
+    band_y_start = int(roi_h * (1.0 - BAND_FRAC))
     band_pts = pts[pts[:, 1] >= band_y_start]
 
     if band_pts.shape[0] >= MIN_BAND_PTS:
-        cx, cy = int(band_pts[:, 0].mean()), int(band_pts[:, 1].mean())
+        cx = int(float(band_pts[:, 0].mean()))
+        cy = int(float(band_pts[:, 1].mean()))
     else:
         N = min(50, pts.shape[0])
-        idx = np.argsort(pts[:, 1])[-N:]
-        sel = pts[idx]
-        cx, cy = int(sel[:,0].mean()), int(sel[:,1].mean())
+        sel = pts[np.argsort(pts[:, 1])[-N:]]
+        cx = int(sel[:, 0].mean())
+        cy = int(sel[:, 1].mean())
 
     contour_full = largest + np.array([0, y0])
     centroid_full = (cx, y0 + cy)
@@ -321,248 +292,458 @@ def get_line_info_bottom(image, mask_builder):
         "band_y_start_full": y0 + band_y_start
     }, mask
 
-# ========================= Logging =========================
-def ensure_log():
+
+# ---------------------------------------------------------------------
+# Encoder / odometry
+# ---------------------------------------------------------------------
+def read_ticks(qcar) -> float:
+    return float(qcar.read_encoder())
+
+
+def neutral(qcar):
     try:
-        with open(LOG_FILE, "x") as f:
-            f.write("# ts\tspeed\ttarget_offset_right\tsteering_gain\trun_time_s\tdist_m\tmean_v\tfinal_v\n")
-    except FileExistsError:
+        qcar.read_write_std(
+            np.array([0.0, 0.0], dtype=np.float64),
+            np.array([0, 0, 0, 0, 0, 0, 0, 0], dtype=np.float64)
+        )
+    except Exception:
         pass
 
-# ========================= Main =========================
+
+class EncoderOdom:
+    def __init__(self, alpha=EMA_ALPHA):
+        self.alpha = alpha
+        self.v_filt = 0.0
+        self.prev_ticks = None
+        self.prev_t = None
+        self.start_ticks = None
+        self.total_ticks = 0.0
+        self.total_dist = 0.0
+
+    def reset(self, qcar):
+        ticks_now = read_ticks(qcar)
+        now = time.time()
+
+        self.prev_ticks = ticks_now
+        self.prev_t = now
+        self.start_ticks = ticks_now
+        self.v_filt = 0.0
+        self.total_ticks = 0.0
+        self.total_dist = 0.0
+
+    def update(self, qcar):
+        now = time.time()
+        ticks_now = read_ticks(qcar)
+
+        if self.prev_t is None or self.prev_ticks is None or self.start_ticks is None:
+            self.prev_ticks = ticks_now
+            self.prev_t = now
+            self.start_ticks = ticks_now
+            return {
+                "ticks_now": ticks_now,
+                "d_ticks": 0.0,
+                "ticks_from_start": 0.0,
+                "d_dist": 0.0,
+                "total_dist": 0.0,
+                "v_raw": 0.0,
+                "v_filt": 0.0,
+                "dt": 0.0
+            }
+
+        dt = max(1e-3, now - self.prev_t)
+        d_ticks = ticks_now - self.prev_ticks
+
+        self.prev_ticks = ticks_now
+        self.prev_t = now
+
+        d_dist = (d_ticks / TICKS_PER_REV) * WHEEL_CIRC_M
+        v_raw = d_dist / dt
+
+        if dt < DT_MIN or dt > DT_MAX or abs(v_raw) > MPS_HARD_MAX:
+            v_raw = self.v_filt
+
+        self.v_filt = self.alpha * v_raw + (1.0 - self.alpha) * self.v_filt
+        self.total_ticks = ticks_now - self.start_ticks
+        self.total_dist += d_dist
+
+        return {
+            "ticks_now": ticks_now,
+            "d_ticks": d_ticks,
+            "ticks_from_start": self.total_ticks,
+            "d_dist": d_dist,
+            "total_dist": self.total_dist,
+            "v_raw": v_raw,
+            "v_filt": self.v_filt,
+            "dt": dt
+        }
+
+
+# ---------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------
+def ensure_logs():
+    try:
+        with open(SAMPLES_LOG, "x") as f:
+            f.write("# samples: ts  t_rel  mode  cmd  steer  ticks_now  d_ticks  ticks_from_start  d_dist  total_dist  v_raw  v_filt\n")
+            f.write(f"# test={TEST_LABEL}\n\n")
+    except FileExistsError:
+        with open(SAMPLES_LOG, "a") as f:
+            f.write("\n# --- APPEND RUN ---\n")
+
+    try:
+        with open(SUMMARY_LOG, "x") as f:
+            f.write("# summary: ts  mode  total_ticks  total_dist  v_mean  v_std  N\n")
+            f.write(f"# test={TEST_LABEL}\n\n")
+    except FileExistsError:
+        with open(SUMMARY_LOG, "a") as f:
+            f.write("\n# --- APPEND RUN ---\n")
+
+
+def mode_name(mode: RunMode) -> str:
+    if mode == RunMode.LINE_FOLLOW:
+        return "LINE_FOLLOW"
+    if mode == RunMode.LEFT_TURN:
+        return "LEFT_TURN"
+    if mode == RunMode.RIGHT_TURN:
+        return "RIGHT_TURN"
+    return "UNKNOWN"
+
+
+# ---------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------
 def main():
-    global frame_count, fps, last_time, speed, target_offset_right
+    ensure_logs()
 
-    ensure_log()
+    car = QCar()
+    cam3d = SafeCamera3D(
+        mode='RGB',
+        frame_width=1280,
+        frame_height=720,
+        frame_rate=20.0,
+        device_id='0',
+        fail_reset_threshold=8,
+        max_no_good_secs=2.5,
+        verbose=True
+    )
 
-    myCar = QCar()
-    odo = SpeedOdom()
-    odo.reset(myCar)
+    odo = EncoderOdom()
+    odo.reset(car)
 
-    grab = FrameGrabber()
-    grab.start()
+    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW, 960, 540)
 
+    run_mode = RunMode.LINE_FOLLOW
     running = False
     run_t0 = None
-    speed_samples = []
+    program_t0 = time.time()
+    last_sample_ts = 0.0
+    summary_speed_samples = []
 
-    if not HEADLESS:
-        cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
-        cv2.namedWindow(MASK_WINDOW, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(WINDOW, 1280, 720)
-        cv2.resizeWindow(MASK_WINDOW, 800, 240)
+    frame_count = 0
+    fps = 0
+    last_fps_t = time.time()
 
     print("""
 Controls:
-    S : start line follow (pink priority, yellow fallback)
-    X : stop line follow and save result
-  R : reset odometry
-  A : target 20 px more left
-  D : target 20 px more right
-  Z : speed -0.002
-  C : speed +0.002
-  Q : neutral stop
-  ESC : quit
+  F     : select LINE FOLLOW mode
+  L     : select LEFT TURN mode
+  R     : select RIGHT TURN mode
+  S     : start run
+  X     : stop run and save summary
+  Q     : neutral / stop motors
+  T     : reset odometry baseline
+  C     : reset camera
+  ESC   : quit
 """)
 
     try:
-        escalation = 0
         while True:
-            cycle_start = time.time()
-            now = time.time()
+            loop_t0 = time.time()
 
-            v_raw, v_filt, dist_m, dt = odo.update(myCar)
+            rgb = cam3d.read()
+            enc = odo.update(car)
 
-            img = grab.get_frame()
-            if img is None:
-                neutral_brake(myCar)
-                if (time.time() - grab.last_good_t) > 2.0:
-                    escalation += 1
-                if escalation >= MAX_ESCALATION:
-                    newCar = reopen_qcar(myCar)
-                    if newCar is None:
-                        os.execv(sys.executable, [sys.executable] + sys.argv)
-                    else:
-                        myCar = newCar
-                        odo.reset(myCar)
-                    escalation = 0
-                time.sleep(0.02)
+            if rgb is None:
+                neutral(car)
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27:
+                    break
                 continue
-            else:
-                escalation = 0
 
-            display = img.copy()
-            yellow_info, yellow_mask = get_line_info_bottom(img, make_yellow_mask)
-            pink_info, pink_mask = get_line_info_bottom(img, make_pink_mask)
+            disp = rgb.copy()
+            hF, wF, _ = rgb.shape
 
+            drive_speed = 0.0
+            drive_steer = 0.0
+            yellow_info, yellow_mask = get_line_info_bottom(rgb, make_yellow_mask)
+            pink_info, pink_mask = get_line_info_bottom(rgb, make_pink_mask)
+
+            info = None
             active_line = None
+            active_mask = yellow_mask
+
             if pink_info is not None:
-                info, mask = pink_info, pink_mask
+                info = pink_info
                 active_line = "PINK"
+                active_mask = pink_mask
             elif yellow_info is not None:
-                info, mask = yellow_info, yellow_mask
+                info = yellow_info
                 active_line = "YELLOW"
-            else:
-                info, mask = None, cv2.bitwise_or(pink_mask, yellow_mask)
-
-            frame_count += 1
-            if now - last_time >= 1.0:
-                fps = frame_count
-                frame_count = 0
-                last_time = now
-
-            steering = 0.0
-            found = False
-            status = "NO LINE DETECTED"
-
-            if info is not None:
-                found = True
-                h, w, _ = img.shape
-                desired_x = w - target_offset_right
-                error = desired_x - info["cx_full"]
-                steering = float(np.clip(error * steering_gain, -STEER_CMD_CLIP, STEER_CMD_CLIP))
-                status = f"{active_line} | err={error:+.1f} steer={steering:+.3f}"
-                contour_color = (255, 0, 255) if active_line == "PINK" else (0, 255, 255)
-
-                if not HEADLESS:
-                    (rx0, ry0) = info["roi_origin"]
-                    (rw, rh) = info["roi_size"]
-                    cv2.rectangle(display, (rx0, ry0), (rx0+rw-1, ry0+rh-1), (0,255,0), 2)
-                    cv2.drawContours(display, [info["contour"]], -1, contour_color, 2)
-                    cv2.circle(display, info["centroid"], 8, contour_color, -1)
-                    cv2.circle(display, (desired_x, ry0 + rh//2), 8, (0,0,255), -1)
-                    cv2.rectangle(display, (rx0, info["band_y_start_full"]),
-                                  (rx0 + rw - 1, ry0 + rh - 1), (0, 200, 200), 2)
-
-            calc_ms = (time.time() - cycle_start) * 1000.0
+                active_mask = yellow_mask
 
             if running:
-                try:
-                    if found:
-                        mtr_cmd = np.array([speed, steering], dtype=np.float64)
-                        LEDs = np.array([0,0,0,0, 0,0,1,1], dtype=np.float64)
-                        if (time.time() - cycle_start) > MAX_LOOP_TIME_S:
-                            neutral_brake(myCar)
-                        else:
-                            myCar.read_write_std(mtr_cmd, LEDs)
+                if run_mode == RunMode.LINE_FOLLOW:
+                    if info is not None:
+                        desired_x = wF - TARGET_OFFSET_RIGHT
+                        error = desired_x - info["cx_full"]
+                        steering = float(np.clip(error * STEER_GAIN, -STEER_CLIP, STEER_CLIP))
+
+                        drive_speed = SPEED_BASE
+                        drive_steer = steering
+
+                        (rx0, ry0) = info["roi_origin"]
+                        (rw, rh) = info["roi_size"]
+
+                        cv2.rectangle(disp, (rx0, ry0), (rx0 + rw - 1, ry0 + rh - 1), (0, 255, 0), 2)
+                        cv2.drawContours(disp, [info["contour"]], -1, (255, 0, 0), 2)
+                        cv2.circle(disp, info["centroid"], 7, (255, 0, 0), -1)
+                        cv2.circle(disp, (desired_x, ry0 + rh // 2), 7, (0, 0, 255), -1)
+                        cv2.rectangle(
+                            disp,
+                            (rx0, info["band_y_start_full"]),
+                            (rx0 + rw - 1, ry0 + rh - 1),
+                            (0, 200, 200),
+                            2
+                        )
+                        cv2.putText(
+                            disp, f"FOLLOWING {active_line}",
+                            (10, 140),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 255), 2
+                        )
                     else:
-                        neutral_brake(myCar)
-                    speed_samples.append(v_filt)
-                except Exception:
-                    neutral_brake(myCar)
-                    newCar = reopen_qcar(myCar)
-                    if newCar is None:
-                        escalation += 1
-                        if escalation >= MAX_ESCALATION:
-                            os.execv(sys.executable, [sys.executable] + sys.argv)
-                    else:
-                        myCar = newCar
-                        odo.reset(myCar)
-                        escalation = 0
-            else:
-                neutral_brake(myCar)
-
-            if not HEADLESS:
-                cv2.putText(display, f"Mode: {'RUNNING' if running else 'IDLE'}", (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,255), 2)
-                cv2.putText(display, f"FPS:{fps}  Calc:{calc_ms:.1f} ms", (10, 60),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
-                cv2.putText(display, f"Status: {status}", (10, 90),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
-                cv2.putText(display, f"Speed cmd: {speed:.3f}", (10, 120),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
-                cv2.putText(display, f"Steering: {steering:+.3f}  Angle:{steering*max_steering_angle:+.1f} deg", (10, 150),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
-                cv2.putText(display, f"Target offset right: {target_offset_right}", (10, 180),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
-                cv2.putText(display, f"Distance: {dist_m:.3f} m", (10, 210),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,255), 2)
-                cv2.putText(display, f"v_raw: {v_raw:+.3f} m/s   v_filt: {v_filt:+.3f} m/s", (10, 240),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,255), 2)
-
-                cv2.imshow(WINDOW, display)
-                cv2.imshow(MASK_WINDOW, mask)
-
-                k = cv2.waitKey(1) & 0xFF
-            else:
-                time.sleep(0.01)
-                k = -1
-
-            if k == 27:
-                break
-            elif k in (ord('q'), ord('Q')):
-                running = False
-                neutral_brake(myCar)
-                print("[Neutral] stopped")
-            elif k in (ord('a'), ord('A')):
-                target_offset_right = max(0, target_offset_right + 20)
-                print(f"[Target offset right] {target_offset_right}")
-            elif k in (ord('d'), ord('D')):
-                target_offset_right = max(0, target_offset_right - 20)
-                print(f"[Target offset right] {target_offset_right}")
-            elif k in (ord('z'), ord('Z')):
-                speed = max(0.0, round(speed - 0.002, 3))
-                print(f"[Speed] {speed:.3f}")
-            elif k in (ord('c'), ord('C')):
-                speed = round(speed + 0.002, 3)
-                print(f"[Speed] {speed:.3f}")
-            elif k in (ord('r'), ord('R')):
-                odo.reset(myCar)
-                speed_samples = []
-                run_t0 = None
-                print("[Reset] odometry reset")
-            elif k in (ord('s'), ord('S')):
-                if not running:
-                    odo.reset(myCar)
-                    speed_samples = []
-                    run_t0 = time.time()
-                    running = True
-                    print(
-                        f"[Run] START line follow (pink priority, yellow fallback) | "
-                        f"speed={speed:.3f} | target_offset_right={target_offset_right}"
-                    )
-            elif k in (ord('x'), ord('X')):
-                if running:
-                    running = False
-                    neutral_brake(myCar)
-
-                    run_time = time.time() - run_t0 if run_t0 is not None else 0.0
-                    mean_v = float(np.mean(speed_samples)) if speed_samples else 0.0
-                    final_v = float(v_filt)
-
-                    with open(LOG_FILE, "a") as f:
-                        f.write(
-                            f"{time.time():.6f}\t"
-                            f"{speed:.3f}\t"
-                            f"{target_offset_right}\t"
-                            f"{steering_gain:.6f}\t"
-                            f"{run_time:.3f}\t"
-                            f"{dist_m:.3f}\t"
-                            f"{mean_v:.6f}\t"
-                            f"{final_v:.6f}\n"
+                        drive_speed = 0.0
+                        drive_steer = 0.0
+                        cv2.putText(
+                            disp, "NO YELLOW/PINK -> STOP",
+                            (10, 140),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2
                         )
 
-                    print(f"[Run] STOP line follow | speed={speed:.3f} | "
-                          f"time={run_time:.2f}s | dist={dist_m:.3f}m")
+                elif run_mode == RunMode.LEFT_TURN:
+                    drive_speed = LEFT_TURN_SPEED
+                    drive_steer = LEFT_TURN_STEER
+                    cv2.putText(
+                        disp, "MODE: LEFT TURN",
+                        (10, 140),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 255), 2
+                    )
+
+                elif run_mode == RunMode.RIGHT_TURN:
+                    drive_speed = RIGHT_TURN_SPEED
+                    drive_steer = RIGHT_TURN_STEER
+                    cv2.putText(
+                        disp, "MODE: RIGHT TURN",
+                        (10, 140),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 200, 255), 2
+                    )
+
+            else:
+                if info is not None:
+                    (rx0, ry0) = info["roi_origin"]
+                    (rw, rh) = info["roi_size"]
+                    cv2.rectangle(disp, (rx0, ry0), (rx0 + rw - 1, ry0 + rh - 1), (120, 120, 120), 1)
+                    cv2.drawContours(disp, [info["contour"]], -1, (120, 120, 120), 1)
+                    cv2.circle(disp, info["centroid"], 5, (120, 120, 120), -1)
+                    cv2.putText(
+                        disp, f"VISIBLE: {active_line}",
+                        (10, 140),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (180, 180, 180), 2
+                    )
+
+            mtr_cmd = np.array([drive_speed, drive_steer], dtype=np.float64)
+            LEDs = np.array([0, 0, 0, 0, 0, 0, 1 if running else 0, 1 if running else 0], dtype=np.float64)
+
+            try:
+                car.read_write_std(mtr_cmd, LEDs)
+            except Exception:
+                neutral(car)
+
+            now = time.time()
+            t_rel = now - program_t0
+
+            if running and (now - last_sample_ts) >= SAMPLE_DT:
+                last_sample_ts = now
+
+                with open(SAMPLES_LOG, "a") as f:
+                    f.write(
+                        f"{now:.6f}\t{t_rel:.3f}\t{mode_name(run_mode)}\t{drive_speed:.3f}\t{drive_steer:+.6f}\t"
+                        f"{enc['ticks_now']:.3f}\t{enc['d_ticks']:.3f}\t{enc['ticks_from_start']:.3f}\t"
+                        f"{enc['d_dist']:.6f}\t{enc['total_dist']:.6f}\t"
+                        f"{enc['v_raw']:.6f}\t{enc['v_filt']:.6f}\n"
+                    )
+
+                if run_t0 is not None and (now - run_t0) >= SETTLE_S:
+                    summary_speed_samples.append(enc["v_filt"])
+
+            frame_count += 1
+            if now - last_fps_t >= 1.0:
+                fps = frame_count
+                frame_count = 0
+                last_fps_t = now
+
+            calc_ms = (time.time() - loop_t0) * 1000.0
+            angle_deg = drive_steer * MAX_STEER_ANGLE_DEG
+
+            cv2.putText(
+                disp,
+                f"FPS:{fps}  Calc:{calc_ms:.1f} ms  Running:{running}",
+                (HUD_X, HUD_Y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
+            )
+            cv2.putText(
+                disp,
+                f"Selected Mode:{mode_name(run_mode)}",
+                (HUD_X, HUD_Y + HUD_DY),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2
+            )
+            cv2.putText(
+                disp,
+                f"Cmd:{drive_speed:.3f}  Steer:{drive_steer:+.3f}  Angle:{angle_deg:+.1f} deg",
+                (HUD_X, HUD_Y + 2 * HUD_DY),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2
+            )
+            cv2.putText(
+                disp,
+                f"Ticks now:{enc['ticks_now']:.1f}  dTicks:{enc['d_ticks']:.1f}  RunTicks:{enc['ticks_from_start']:.1f}",
+                (HUD_X, HUD_Y + 3 * HUD_DY),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2
+            )
+            cv2.putText(
+                disp,
+                f"dDist:{enc['d_dist']:.4f} m  TotalDist:{enc['total_dist']:.3f} m",
+                (HUD_X, HUD_Y + 4 * HUD_DY),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2
+            )
+            cv2.putText(
+                disp,
+                f"v_raw:{enc['v_raw']:+.3f} m/s  v_filt:{enc['v_filt']:+.3f} m/s",
+                (HUD_X, HUD_Y + 5 * HUD_DY),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 180, 0), 2
+            )
+
+            if running and run_t0 is not None:
+                cv2.putText(
+                    disp,
+                    f"Run t:{now - run_t0:.2f}s  Settle:{SETTLE_S:.1f}s",
+                    (HUD_X, HUD_Y + 6 * HUD_DY),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 255), 2
+                )
+
+            cv2.putText(
+                disp,
+                "Keys: F=line  L=left  R=right  S=start  X=stop  Q=neutral  T=reset odo  C=cam  ESC=quit",
+                (HUD_X, HUD_Y + 7 * HUD_DY),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 2
+            )
+
+            cv2.imshow(WINDOW, disp)
+
+            key = cv2.waitKey(1) & 0xFF
+
+            if key == 27:
+                break
+
+            elif key in (ord('q'), ord('Q')):
+                running = False
+                neutral(car)
+                print("[Neutral] Stopped motors.")
+
+            elif key in (ord('c'), ord('C')):
+                print("[Camera] Force reset.")
+                cam3d.force_reset()
+
+            elif key in (ord('t'), ord('T')):
+                odo.reset(car)
+                print("[Odom] Reset baseline ticks and distance.")
+
+            elif key in (ord('f'), ord('F')):
+                if not running:
+                    run_mode = RunMode.LINE_FOLLOW
+                    print("[Mode] LINE_FOLLOW")
+
+            elif key in (ord('l'), ord('L')):
+                if not running:
+                    run_mode = RunMode.LEFT_TURN
+                    print("[Mode] LEFT_TURN")
+
+            elif key in (ord('r'), ord('R')):
+                if not running:
+                    run_mode = RunMode.RIGHT_TURN
+                    print("[Mode] RIGHT_TURN")
+
+            elif key in (ord('s'), ord('S')):
+                if not running:
+                    odo.reset(car)
+                    summary_speed_samples = []
+                    run_t0 = time.time()
+                    running = True
+                    print(f"[Run] START mode={mode_name(run_mode)}")
+
+            elif key in (ord('x'), ord('X')):
+                if running:
+                    running = False
+                    neutral(car)
+
+                    if summary_speed_samples:
+                        arr = np.asarray(summary_speed_samples, dtype=float)
+                        v_mean = float(arr.mean())
+                        v_std = float(arr.std(ddof=0))
+                        n = int(arr.size)
+                    else:
+                        v_mean = 0.0
+                        v_std = 0.0
+                        n = 0
+
+                    with open(SUMMARY_LOG, "a") as f:
+                        f.write(
+                            f"{time.time():.6f}\t{mode_name(run_mode)}\t"
+                            f"{enc['ticks_from_start']:.3f}\t{enc['total_dist']:.6f}\t"
+                            f"{v_mean:.6f}\t{v_std:.6f}\t{n}\n"
+                        )
+
+                    print(
+                        f"[Run] STOP mode={mode_name(run_mode)} -> "
+                        f"total_ticks={enc['ticks_from_start']:.1f}, "
+                        f"total_dist={enc['total_dist']:.3f} m, "
+                        f"v_mean={v_mean:.3f}, v_std={v_std:.3f}, N={n}"
+                    )
+
+            time.sleep(0.005)
+
+    except KeyboardInterrupt:
+        pass
 
     finally:
+        try:
+            neutral(car)
+        except Exception:
+            pass
+        try:
+            car.terminate()
+        except Exception:
+            pass
+        try:
+            cam3d.terminate()
+        except Exception:
+            pass
         try:
             cv2.destroyAllWindows()
         except Exception:
             pass
-        try:
-            grab.stop()
-        except Exception:
-            pass
-        try:
-            neutral_brake(myCar)
-        except Exception:
-            pass
-        try:
-            myCar.terminate()
-        except Exception:
-            pass
-        print(f"\nSaved log: {LOG_FILE}")
+
+        print(f"\nLogs written:\n  {SAMPLES_LOG}\n  {SUMMARY_LOG}\nBye!")
+
 
 if __name__ == "__main__":
     main()

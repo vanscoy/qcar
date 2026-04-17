@@ -541,7 +541,7 @@ Controls:
                             f"{final_v:.6f}\n"
                         )
 
-                      print(f"[Run] STOP line follow | speed={speed:.3f} | "
+                    print(f"[Run] STOP line follow | speed={speed:.3f} | "
                           f"time={run_time:.2f}s | dist={dist_m:.3f}m")
 
     finally:

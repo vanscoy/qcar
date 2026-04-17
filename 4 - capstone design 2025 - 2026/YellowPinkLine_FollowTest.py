@@ -269,19 +269,13 @@ def make_yellow_mask(roi):
 def make_pink_mask(roi):
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
-    # Broader pink/magenta range in HSV.
-    m1 = cv2.inRange(hsv, (120, 25, 50), (179, 255, 255))
-    m2 = cv2.inRange(hsv, (135, 10, 90), (179, 200, 255))
+    # Normal pink/magenta range in HSV.
+    m1 = cv2.inRange(hsv, (140, 70, 70), (179, 255, 255))
+    m2 = cv2.inRange(hsv, (150, 40, 120), (179, 200, 255))
     mask_hsv = cv2.bitwise_or(m1, m2)
 
     white_glare = cv2.inRange(hsv, (0, 0, 220), (180, 60, 255))
     mask = cv2.bitwise_and(mask_hsv, cv2.bitwise_not(white_glare))
-
-    # Pink also tends to be strong on the LAB "a" channel.
-    lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
-    a_channel = lab[:, :, 1]
-    _, a_bin = cv2.threshold(a_channel, 145, 255, cv2.THRESH_BINARY)
-    mask = cv2.bitwise_or(mask, a_bin)
 
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL, iterations=1)
@@ -428,13 +422,14 @@ Controls:
                 error = desired_x - info["cx_full"]
                 steering = float(np.clip(error * steering_gain, -STEER_CMD_CLIP, STEER_CMD_CLIP))
                 status = f"{active_line} | err={error:+.1f} steer={steering:+.3f}"
+                contour_color = (255, 0, 255) if active_line == "PINK" else (0, 255, 255)
 
                 if not HEADLESS:
                     (rx0, ry0) = info["roi_origin"]
                     (rw, rh) = info["roi_size"]
                     cv2.rectangle(display, (rx0, ry0), (rx0+rw-1, ry0+rh-1), (0,255,0), 2)
-                    cv2.drawContours(display, [info["contour"]], -1, (255,0,0), 2)
-                    cv2.circle(display, info["centroid"], 8, (255,0,0), -1)
+                    cv2.drawContours(display, [info["contour"]], -1, contour_color, 2)
+                    cv2.circle(display, info["centroid"], 8, contour_color, -1)
                     cv2.circle(display, (desired_x, ry0 + rh//2), 8, (0,0,255), -1)
                     cv2.rectangle(display, (rx0, info["band_y_start_full"]),
                                   (rx0 + rw - 1, ry0 + rh - 1), (0, 200, 200), 2)

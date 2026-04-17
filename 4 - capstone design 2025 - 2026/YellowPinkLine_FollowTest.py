@@ -270,13 +270,19 @@ def make_yellow_mask(roi):
 def make_pink_mask(roi):
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
-    # Magenta/pink range in HSV (OpenCV hue: 0-179)
-    m1 = cv2.inRange(hsv, (130, 60, 60), (179, 255, 255))
-    m2 = cv2.inRange(hsv, (140, 30, 120), (179, 180, 255))
+    # Broader pink/magenta range in HSV.
+    m1 = cv2.inRange(hsv, (125, 40, 70), (179, 255, 255))
+    m2 = cv2.inRange(hsv, (135, 20, 120), (179, 170, 255))
     mask_hsv = cv2.bitwise_or(m1, m2)
 
     white_glare = cv2.inRange(hsv, (0, 0, 220), (180, 60, 255))
     mask = cv2.bitwise_and(mask_hsv, cv2.bitwise_not(white_glare))
+
+    # Pink also tends to be strong on the LAB "a" channel.
+    lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+    a_channel = lab[:, :, 1]
+    _, a_bin = cv2.threshold(a_channel, 150, 255, cv2.THRESH_BINARY)
+    mask = cv2.bitwise_and(mask, a_bin)
 
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL, iterations=1)
@@ -396,6 +402,7 @@ Controls:
             display = img.copy()
             yellow_info, yellow_mask = get_line_info_bottom(img, make_yellow_mask)
             pink_info, pink_mask = get_line_info_bottom(img, make_pink_mask)
+            mask = pink_mask
 
             active_line = None
             if line_phase == "PINK_PRIORITY":
@@ -408,7 +415,7 @@ Controls:
                     active_line = "YELLOW"
                 else:
                     line_phase = "SEARCH_YELLOW"
-                    info, mask = None, yellow_mask
+                    info, mask = None, pink_mask
             elif line_phase == "SEARCH_YELLOW":
                 if yellow_info is not None:
                     line_phase = "YELLOW_LOCK"
@@ -440,7 +447,7 @@ Controls:
                 desired_x = w - target_offset_right
                 error = desired_x - info["cx_full"]
                 steering = float(np.clip(error * steering_gain, -STEER_CMD_CLIP, STEER_CMD_CLIP))
-                status = f"{active_line} | err={error:+.1f} steer={steering:+.3f}"
+                status = f"{line_phase} | {active_line} | err={error:+.1f} steer={steering:+.3f}"
 
                 if not HEADLESS:
                     (rx0, ry0) = info["roi_origin"]
@@ -453,6 +460,8 @@ Controls:
                                   (rx0 + rw - 1, ry0 + rh - 1), (0, 200, 200), 2)
             elif forward_search:
                 status = "SEARCH_YELLOW | driving straight"
+            else:
+                status = f"{line_phase} | no line detected"
 
             calc_ms = (time.time() - cycle_start) * 1000.0
 

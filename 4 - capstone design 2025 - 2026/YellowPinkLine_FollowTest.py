@@ -2,16 +2,15 @@
 # QCar yellow/pink-line follower with encoder distance
 #
 # Goal:
-# - Follow the pink line first (priority)
-# - If pink is lost, keep moving forward while searching for yellow
-# - Once yellow is found, follow yellow
+# - Follow either the pink or yellow line
+# - If both are visible, prioritize the pink line
 # - Continuously show encoder distance traveled
 # - Press S to start following
 # - Press X to stop and save the run
 # - Repeat as many times as you want
 #
 # Controls:
-#   S : start line follow (pink priority, then yellow lock)
+#   S : start line follow (pink priority, yellow fallback)
 #   X : stop line follow and save result
 #   R : reset odometry
 #   A : move target 20 px more left
@@ -352,8 +351,6 @@ def main():
     running = False
     run_t0 = None
     speed_samples = []
-    line_phase = "PINK_PRIORITY"
-    pink_acquired = False
 
     if not HEADLESS:
         cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
@@ -363,7 +360,7 @@ def main():
 
     print("""
 Controls:
-    S : start line follow (pink priority, then yellow lock)
+    S : start line follow (pink priority, yellow fallback)
     X : stop line follow and save result
   R : reset odometry
   A : target 20 px more left
@@ -403,32 +400,16 @@ Controls:
             display = img.copy()
             yellow_info, yellow_mask = get_line_info_bottom(img, make_yellow_mask)
             pink_info, pink_mask = get_line_info_bottom(img, make_pink_mask)
-            mask = pink_mask
 
             active_line = None
-            if line_phase == "PINK_PRIORITY":
-                if pink_info is not None:
-                    info, mask = pink_info, pink_mask
-                    active_line = "PINK"
-                    pink_acquired = True
-                elif pink_acquired:
-                    line_phase = "SEARCH_YELLOW"
-                    info, mask = None, yellow_mask
-                else:
-                    info, mask = None, pink_mask
-            elif line_phase == "SEARCH_YELLOW":
-                if yellow_info is not None:
-                    line_phase = "YELLOW_LOCK"
-                    info, mask = yellow_info, yellow_mask
-                    active_line = "YELLOW"
-                else:
-                    info, mask = None, yellow_mask
-            else:  # YELLOW_LOCK
-                if yellow_info is not None:
-                    info, mask = yellow_info, yellow_mask
-                    active_line = "YELLOW"
-                else:
-                    info, mask = None, yellow_mask
+            if pink_info is not None:
+                info, mask = pink_info, pink_mask
+                active_line = "PINK"
+            elif yellow_info is not None:
+                info, mask = yellow_info, yellow_mask
+                active_line = "YELLOW"
+            else:
+                info, mask = None, cv2.bitwise_or(pink_mask, yellow_mask)
 
             frame_count += 1
             if now - last_time >= 1.0:
@@ -439,7 +420,6 @@ Controls:
             steering = 0.0
             found = False
             status = "NO LINE DETECTED"
-            forward_search = (line_phase == "SEARCH_YELLOW")
 
             if info is not None:
                 found = True
@@ -447,7 +427,7 @@ Controls:
                 desired_x = w - target_offset_right
                 error = desired_x - info["cx_full"]
                 steering = float(np.clip(error * steering_gain, -STEER_CMD_CLIP, STEER_CMD_CLIP))
-                status = f"{line_phase} | {active_line} | err={error:+.1f} steer={steering:+.3f}"
+                status = f"{active_line} | err={error:+.1f} steer={steering:+.3f}"
 
                 if not HEADLESS:
                     (rx0, ry0) = info["roi_origin"]
@@ -458,10 +438,6 @@ Controls:
                     cv2.circle(display, (desired_x, ry0 + rh//2), 8, (0,0,255), -1)
                     cv2.rectangle(display, (rx0, info["band_y_start_full"]),
                                   (rx0 + rw - 1, ry0 + rh - 1), (0, 200, 200), 2)
-            elif forward_search:
-                status = "SEARCH_YELLOW | driving straight"
-            else:
-                status = f"{line_phase} | no line detected"
 
             calc_ms = (time.time() - cycle_start) * 1000.0
 
@@ -469,13 +445,6 @@ Controls:
                 try:
                     if found:
                         mtr_cmd = np.array([speed, steering], dtype=np.float64)
-                        LEDs = np.array([0,0,0,0, 0,0,1,1], dtype=np.float64)
-                        if (time.time() - cycle_start) > MAX_LOOP_TIME_S:
-                            neutral_brake(myCar)
-                        else:
-                            myCar.read_write_std(mtr_cmd, LEDs)
-                    elif forward_search:
-                        mtr_cmd = np.array([speed, 0.0], dtype=np.float64)
                         LEDs = np.array([0,0,0,0, 0,0,1,1], dtype=np.float64)
                         if (time.time() - cycle_start) > MAX_LOOP_TIME_S:
                             neutral_brake(myCar)
@@ -553,10 +522,8 @@ Controls:
                     speed_samples = []
                     run_t0 = time.time()
                     running = True
-                    line_phase = "PINK_PRIORITY"
-                    pink_acquired = False
                     print(
-                        f"[Run] START line follow (pink priority, then yellow lock) | "
+                        f"[Run] START line follow (pink priority, yellow fallback) | "
                         f"speed={speed:.3f} | target_offset_right={target_offset_right}"
                     )
             elif k in (ord('x'), ord('X')):

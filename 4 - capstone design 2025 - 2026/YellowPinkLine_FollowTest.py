@@ -27,6 +27,9 @@ import enum
 BOTTOM_FRAC = 0.40
 BAND_FRAC = 0.20
 MIN_BAND_PTS = 30
+MIN_TOUCH_PTS = 8
+MIN_CONTOUR_AREA = 120
+MAX_CONTOUR_AREA_FRAC = 0.35
 
 TARGET_OFFSET_RIGHT = 1000
 SPEED_BASE = 0.078
@@ -235,16 +238,17 @@ def make_yellow_mask(roi_bgr):
 def make_pink_mask(roi_bgr):
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
 
-    m1 = cv2.inRange(hsv, (120, 25, 50), (179, 255, 255))
-    m2 = cv2.inRange(hsv, (135, 10, 90), (179, 200, 255))
-    mask = cv2.bitwise_or(m1, m2)
+    # Keep pink detection narrow enough to reject floor/wall regions.
+    m1 = cv2.inRange(hsv, (140, 70, 80), (179, 255, 255))
+    m2 = cv2.inRange(hsv, (150, 40, 120), (179, 180, 255))
+    mask_hsv = cv2.bitwise_or(m1, m2)
 
     white_glare = cv2.inRange(hsv, (0, 0, 220), (180, 60, 255))
-    mask = cv2.bitwise_and(mask, cv2.bitwise_not(white_glare))
+    mask_hsv = cv2.bitwise_and(mask_hsv, cv2.bitwise_not(white_glare))
 
     lab = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2LAB)
-    _, a_bin = cv2.threshold(lab[:, :, 1], 145, 255, cv2.THRESH_BINARY)
-    mask = cv2.bitwise_or(mask, a_bin)
+    _, a_bin = cv2.threshold(lab[:, :, 1], 155, 255, cv2.THRESH_BINARY)
+    mask = cv2.bitwise_and(mask_hsv, a_bin)
 
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, KERNEL5, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, KERNEL5, iterations=1)
@@ -255,6 +259,7 @@ def get_line_info_bottom(image_bgr, mask_builder):
     h, w, _ = image_bgr.shape
     y0 = int(h * (1.0 - BOTTOM_FRAC))
     roi = image_bgr[y0:h, 0:w]
+    roi_area = roi.shape[0] * roi.shape[1]
 
     mask = mask_builder(roi)
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -263,13 +268,19 @@ def get_line_info_bottom(image_bgr, mask_builder):
         return None, mask
 
     largest = max(cnts, key=cv2.contourArea)
-    if cv2.contourArea(largest) < 50:
+    contour_area = cv2.contourArea(largest)
+    if contour_area < MIN_CONTOUR_AREA:
+        return None, mask
+    if contour_area > (MAX_CONTOUR_AREA_FRAC * roi_area):
         return None, mask
 
     pts = largest.reshape(-1, 2)
     roi_h = roi.shape[0]
     band_y_start = int(roi_h * (1.0 - BAND_FRAC))
     band_pts = pts[pts[:, 1] >= band_y_start]
+
+    if band_pts.shape[0] < MIN_TOUCH_PTS:
+        return None, mask
 
     if band_pts.shape[0] >= MIN_BAND_PTS:
         cx = int(float(band_pts[:, 0].mean()))

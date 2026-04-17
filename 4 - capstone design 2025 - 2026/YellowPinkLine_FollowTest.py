@@ -441,8 +441,6 @@ Controls:
                 error = desired_x - info["cx_full"]
                 steering = float(np.clip(error * steering_gain, -STEER_CMD_CLIP, STEER_CMD_CLIP))
                 status = f"{active_line} | err={error:+.1f} steer={steering:+.3f}"
-            elif forward_search:
-                status = "SEARCH_YELLOW | driving straight"
 
                 if not HEADLESS:
                     (rx0, ry0) = info["roi_origin"]
@@ -453,6 +451,8 @@ Controls:
                     cv2.circle(display, (desired_x, ry0 + rh//2), 8, (0,0,255), -1)
                     cv2.rectangle(display, (rx0, info["band_y_start_full"]),
                                   (rx0 + rw - 1, ry0 + rh - 1), (0, 200, 200), 2)
+            elif forward_search:
+                status = "SEARCH_YELLOW | driving straight"
 
             calc_ms = (time.time() - cycle_start) * 1000.0
 

@@ -1,0 +1,21 @@
+STEP 1 — Open QLabs
+
+Launch Quanser Interactive Labs
+
+Go into the cityscape and load the map.
+
+Leave it open (don’t close it)
+
+STEP 2 — Open a terminal (Terminal #1)
+
+Navigate to your project folder:
+
+cd C:\Users\QCar2024Comp\Desktop\2025-2026\Virtual_Test
+
+Run the scenario/world script (this spawns the car + roads + lights):
+
+py -V:3.12 Setup_Real_Scenario_Fixed.py
+
+STEP 3 - Open a new terminal
+
+Run your code on this.

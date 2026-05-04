@@ -24,5 +24,8 @@ Testing_Sanaa_Narhan:
 Qcar_line_following:
     Has mostly line following code but also a dumbster for every type of code.
 
+Pictues:
+    Has all our pictures and code for taking those p[ictures.
+
 Expo:
     Our FINAL_CODE.py it is our most up to date code, what we used at the expo, the picture of our track and such.

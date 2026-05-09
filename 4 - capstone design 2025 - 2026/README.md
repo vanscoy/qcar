@@ -11,7 +11,7 @@ Miami University
 
 ## Advisors
 
-- .[Bryan Van Scoy](https://vanscoy.github.io/)
+- [Bryan Van Scoy](https://vanscoy.github.io/)
 - Dave Hartup
 
 ## Repository Overview

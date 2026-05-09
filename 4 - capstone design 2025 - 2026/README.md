@@ -1,31 +1,39 @@
-Capstone Design 2025 - 2026
-Department of Electrical and Computer Engineering
+# QCar Capstone Design 2025–2026
+
+Department of Electrical and Computer Engineering  
 Miami University
 
-Team: Andrew Rhoades, Nathan Wodicka, Tuvshinsanaa (Sanaa) Yalalt
-Advisors: Bryan Van Scoy and Dave Hartup
+## Team
 
+- Andrew Rhoades
+- Nathan Wodicka
+- [Tuvshinsanaa “Sanaa” Yalalt](https://github.com/Sanaa35)
 
-Object_Detection:
-    Has stop sign detection and object detection and avoidance code.
+## Advisors
 
-A*_Path_Finding:
-    Has the code necessary for A*
+- .[Bryan Van Scoy](https://vanscoy.github.io/)
+- Dave Hartup
 
-Encoder_Test:
-    Has all the code for encoder tests and results, whetever that be speed or line following.
+## Repository Overview
 
-Virtual_Stage:
-    Has our final virtual submission code and video
+This repository contains the code, testing files, pictures, and final implementation for our Quanser QCar autonomous taxi capstone project. The project focuses on autonomous navigation, path planning, line following, object detection, and final demonstration code used during the Senior Design Expo.
 
-Testing_Sanaa_Narhan:
-    Has a bunch of wacky tests for evrything.
+## Folder Structure
 
-Qcar_line_following:
-    Has mostly line following code but also a dumbster for every type of code.
+| Folder | Description |
+|---|---|
+| `Object_Detection` | Contains stop sign detection, object detection, and obstacle avoidance code. |
+| `A*_Path_Finding` | Contains the code necessary for A* path planning. |
+| `Encoder_Test` | Contains encoder tests and results, including speed testing and line-following experiments. |
+| `Virtual_Stage` | Contains our final virtual submission code and video. |
+| `Testing_Sanaa_Narhan` | Contains experimental test files for different parts of the project. |
+| `qcar_line_following` | Contains mostly line-following code, along with several additional testing files. |
+| `Pictures` | Contains project pictures and code-related images. |
+| `Expo` | Contains our most up-to-date expo code, including the final code used during the demonstration and the track picture. |
 
-Pictues:
-    Has all our pictures and code for taking those p[ictures.
+## Final Code
 
-Expo:
-    Our FINAL_CODE.py it is our most up to date code, what we used at the expo, the picture of our track and such.
+The main final implementation is located in:
+
+```text
+FINAL_CODE.py

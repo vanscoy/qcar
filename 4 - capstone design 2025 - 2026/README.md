@@ -23,7 +23,7 @@ This repository contains the code, testing files, pictures, and final implementa
 | Folder | Description |
 |---|---|
 | `Object_Detection` | Contains stop sign detection, object detection, and obstacle avoidance code. |
-| `A*_Path_Finding` | Contains the code necessary for A* path planning. |
+| `A_star_Path_Finding` | Contains the code necessary for A* path planning. |
 | `Encoder_Test` | Contains encoder tests and results, including speed testing and line-following experiments. |
 | `Virtual_Stage` | Contains our final virtual submission code and video. |
 | `Testing_Sanaa_Narhan` | Contains experimental test files for different parts of the project. |
